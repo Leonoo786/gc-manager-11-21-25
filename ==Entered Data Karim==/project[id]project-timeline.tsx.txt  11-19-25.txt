@@ -1,0 +1,281 @@
+project>[id]/project-timeline.tsx
+
+'use client';
+
+import React, { useMemo } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+import type { Project } from '../projects-data';
+
+// Extend Project with the money/date fields we care about.
+type RichProject = Project & {
+  // original field from the main Projects page
+  contractAmount?: number;
+  // new field we also support (kept in sync with contractAmount)
+  finalBidToCustomer?: number;
+
+  internalContractAmount?: number;
+  startDate?: string; // ISO like "2025-01-16"
+  endDate?: string;
+  progress?: number; // percentage 0–100
+};
+
+interface ProjectTimelineProps {
+  project: RichProject;
+  /** Sum of Committed Cost column coming from BudgetTable */
+  totalBudget: number;
+  /** Sum of all expense amounts */
+  totalSpent: number;
+}
+
+function diffInDays(start: Date, end: Date): number {
+  const ms = end.getTime() - start.getTime();
+  return Math.max(0, Math.round(ms / (1000 * 60 * 60 * 24)));
+}
+
+export function ProjectTimeline({
+  project,
+  totalBudget,
+  totalSpent,
+}: ProjectTimelineProps) {
+  // 👇 THIS is the key line:
+  // Final bid comes from the same field as the main Projects page.
+  const finalBidToCustomer =
+    project.finalBidToCustomer ?? project.contractAmount ?? 0;
+
+  const {
+    internalContractAmount,
+    startDate,
+    endDate,
+    progress: rawProgress,
+  } = project;
+
+  // Profit/Loss = Final Bid to Customer – Spent to Date
+  const profitLoss = useMemo(
+    () => finalBidToCustomer - totalSpent,
+    [finalBidToCustomer, totalSpent],
+  );
+
+  const {
+    totalDays,
+    daysPassed,
+    daysLeft,
+    endLabel,
+  } = useMemo(() => {
+    const today = new Date();
+
+    if (!startDate || !endDate) {
+      return {
+        totalDays: 0,
+        daysPassed: 0,
+        daysLeft: 0,
+        endLabel: 'No end date',
+      };
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const totalDaysRaw = Math.max(1, diffInDays(start, end)); // at least 1 day
+    const passedRaw =
+      today <= start
+        ? 0
+        : today >= end
+        ? totalDaysRaw
+        : diffInDays(start, today);
+
+    const left = Math.max(0, totalDaysRaw - passedRaw);
+
+    const endLabel = end.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    return {
+      totalDays: totalDaysRaw,
+      daysPassed: passedRaw,
+      daysLeft: left,
+      endLabel,
+    };
+  }, [startDate, endDate]);
+
+  const budgetPercentUsed = useMemo(() => {
+    if (!totalBudget || totalBudget <= 0) return 0;
+    return Math.min(100, Math.round((totalSpent / totalBudget) * 100));
+  }, [totalBudget, totalSpent]);
+
+  const progressPercent =
+    rawProgress !== undefined && rawProgress !== null
+      ? Math.max(0, Math.min(100, rawProgress))
+      : totalDays > 0
+      ? Math.round((daysPassed / totalDays) * 100)
+      : 0;
+
+  const formatMoney = (value: number) =>
+    value.toLocaleString(undefined, {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 2,
+    });
+
+  const isProfitPositive = profitLoss >= 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Top cards row */}
+      <div className="grid gap-4 md:grid-cols-4">
+        {/* Final Bid to Customer */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Final Bid to Customer
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-semibold">
+              {formatMoney(finalBidToCustomer)}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Total of committed costs
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Total Budget (cost) – this is the sum of Committed Cost */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Total Budget (cost)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-semibold">
+              {formatMoney(totalBudget)}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Internal cost estimate
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Spent to Date */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Spent to Date
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-semibold">
+              {formatMoney(totalSpent)}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {budgetPercentUsed}% of Budget
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Profit/Loss = Bid – Spent */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Profit/Loss
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              className={`text-xl font-semibold ${
+                isProfitPositive ? 'text-emerald-600' : 'text-red-600'
+              }`}
+            >
+              {formatMoney(profitLoss)}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">Bid – Spent</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Timeline / dates / budget status */}
+      <div className="grid gap-4 md:grid-cols-3">
+        {/* Schedule summary */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              {totalDays > 0
+                ? `${totalDays} Total Days (${endLabel})`
+                : 'Schedule'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {totalDays > 0 ? (
+              <>
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>{daysPassed} days passed</span>
+                  <span>{daysLeft} left</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-2 rounded-full bg-primary"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round((daysPassed / totalDays) * 100),
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Set a start and end date in the Edit Project dialog to see
+                schedule info.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Budget status */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Budget Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm font-medium">
+              {formatMoney(totalSpent)} spent
+            </p>
+            <p className="text-xs text-muted-foreground mb-2">
+              {formatMoney(Math.max(0, totalBudget - totalSpent))} left
+            </p>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-2 rounded-full bg-primary"
+                style={{ width: `${budgetPercentUsed}%` }}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Overall progress (optional) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">
+              Progress
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm font-medium">{progressPercent}% complete</p>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-2 rounded-full bg-primary"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,331 @@
+src/app/(app)/projects/[id]/page.tsx.  11-19-25
+
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+
+import { BudgetTable } from './budget-table';
+import { ExpensesTable } from './expenses-table';
+import { SpendingCategoriesTable } from './spending-categories-table';
+import { ChangeOrdersTable } from './change-orders-table';
+import { GetReimbursedTable } from './get-reimbursed-table';
+import { MilestonesList } from './milestones-list';
+import { DrawingsTable } from './drawings-table';
+import { ScheduleTable } from './schedule-table';
+import { RfisTable } from './rfis-table';
+import { ClientUploadsTable } from './client-uploads-table';
+import { ApplicationsTable } from './applications-table';
+import { ProjectTimeline } from './project-timeline';
+import { ProjectEditDialog } from './project-edit-dialog';
+
+import type {
+  Project,
+  ChangeOrder,
+  ClientUpload,
+  ReimbursableExpense,
+  Application,
+} from '../projects-data';
+import type { BudgetItem } from './budget-data';
+import type { Expense } from './expenses-data';
+
+export default function ProjectDetailsPage() {
+  const params = useParams();
+  const id = params.id as string;
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // NEW: total of "Committed Cost" column coming from BudgetTable
+  const [committedTotal, setCommittedTotal] = useState<number>(0);
+
+  // NEW: Edit-dialog open state
+  const [isEditOpen, setIsEditOpen] = useState(false);
+
+  // -----------------------------
+  // Load project from localStorage
+  // -----------------------------
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedProjects = localStorage.getItem('projects');
+      const projects: Project[] = savedProjects ? JSON.parse(savedProjects) : [];
+      const currentProject = projects.find((p) => p.id === id) || null;
+      setProject(currentProject as Project | null);
+    }
+    setIsMounted(true);
+  }, [id]);
+
+  // Helper to persist project back to localStorage
+  const updateProjectData = (updatedProject: Project) => {
+    setProject(updatedProject);
+    if (typeof window !== 'undefined') {
+      const savedProjects = localStorage.getItem('projects');
+      const projects: Project[] = savedProjects ? JSON.parse(savedProjects) : [];
+      const updatedProjects = projects.map((p) =>
+        p.id === updatedProject.id ? updatedProject : p,
+      );
+      localStorage.setItem('projects', JSON.stringify(updatedProjects));
+    }
+  };
+
+  // --------------------------------------------
+  // Handlers for child tables that mutate project
+  // --------------------------------------------
+
+  const handleBudgetDataChange = (newBudgetData: BudgetItem[]) => {
+    if (!project) return;
+    const updatedProject: Project = { ...project, budgetData: newBudgetData };
+    updateProjectData(updatedProject);
+  };
+
+  const handleExpensesDataChange = (newExpensesData: Expense[]) => {
+    if (!project) return;
+    const updatedProject: Project = { ...project, expensesData: newExpensesData };
+    updateProjectData(updatedProject);
+  };
+
+  const handleChangeOrdersDataChange = (newChangeOrdersData: ChangeOrder[]) => {
+    if (!project) return;
+    const updatedProject: Project = {
+      ...project,
+      changeOrdersData: newChangeOrdersData,
+    };
+    updateProjectData(updatedProject);
+  };
+
+  const handleGetReimbursedDataChange = (
+    newGetReimbursedData: ReimbursableExpense[],
+  ) => {
+    if (!project) return;
+    const updatedProject: Project = {
+      ...project,
+      getReimbursedData: newGetReimbursedData,
+    };
+    updateProjectData(updatedProject);
+  };
+
+  const handleClientUploadsDataChange = (newClientUploadsData: ClientUpload[]) => {
+    if (!project) return;
+    const updatedProject: Project = {
+      ...project,
+      clientUploadsData: newClientUploadsData,
+    };
+    updateProjectData(updatedProject);
+  };
+
+  const handleApplicationsDataChange = (newApplicationsData: Application[]) => {
+    if (!project) return;
+    const updatedProject: Project = {
+      ...project,
+      applicationsData: newApplicationsData,
+    };
+    updateProjectData(updatedProject);
+  };
+
+  // -----------------------------------
+  // Derived totals for header/stat cards
+  // -----------------------------------
+  // NOTE: We NOW use `committedTotal` as "Total Budget (cost)"
+  const totalSpent = useMemo(() => {
+    if (!project) return 0;
+    return (project.expensesData ?? []).reduce(
+      (acc, item) => acc + (item.amount ?? 0),
+      0,
+    );
+  }, [project]);
+
+  // ---------------------------
+  // Derived views from expenses
+  // ---------------------------
+  const baseExpenses: Expense[] = useMemo(
+    () => (project?.expensesData ?? []) as Expense[],
+    [project],
+  );
+
+  // All rows whose Category = "Get Reimbursed"
+  const reimbursableExpenses: Expense[] = useMemo(
+    () =>
+      baseExpenses.filter(
+        (e) =>
+          e.category &&
+          e.category.toLowerCase().trim() === 'get reimbursed'.toLowerCase(),
+      ),
+    [baseExpenses],
+  );
+
+  // All rows whose Category = "Change Order"
+  const changeOrderExpenses: Expense[] = useMemo(
+    () =>
+      baseExpenses.filter(
+        (e) =>
+          e.category &&
+          e.category.toLowerCase().trim() === 'change order'.toLowerCase(),
+      ),
+    [baseExpenses],
+  );
+
+  // -------------------
+  // Loading / not found
+  // -------------------
+  if (!isMounted) {
+    return <div>Loading...</div>;
+  }
+
+  if (!project) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center">
+        <h1 className="text-2xl font-bold">Project not found</h1>
+        <Link href="/projects" passHref>
+          <Button variant="link">Back to Projects</Button>
+        </Link>
+      </div>
+    );
+  }
+
+  // -----------
+  // MAIN RENDER
+  // -----------
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link href="/projects" passHref>
+            <Button variant="outline" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold font-headline tracking-tight">
+              {project.name}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {project.description}
+            </p>
+          </div>
+        </div>
+
+        {/* NEW: Edit Project button opens dialog */}
+        <Button variant="outline" onClick={() => setIsEditOpen(true)}>
+          Edit Project
+        </Button>
+      </div>
+
+      {/* Timeline / summary cards */}
+      <div className="space-y-6">
+        <ProjectTimeline
+          project={project}
+          // IMPORTANT: This is now the sum of Committed Cost (from BudgetTable)
+          totalBudget={committedTotal}
+          totalSpent={totalSpent}
+        />
+      </div>
+
+      {/* Tabs */}
+      <Tabs defaultValue="report">
+        <TabsList className="mb-4">
+          <TabsTrigger value="report">Report</TabsTrigger>
+          <TabsTrigger value="budget">Budget</TabsTrigger>
+          <TabsTrigger value="expenses">Expenses</TabsTrigger>
+          <TabsTrigger value="change-orders">Change Orders</TabsTrigger>
+          <TabsTrigger value="get-reimbursed">Get Reimbursed</TabsTrigger>
+          <TabsTrigger value="milestones">Milestones</TabsTrigger>
+          <TabsTrigger value="applications">Applications</TabsTrigger>
+          <TabsTrigger value="drawings">Drawings</TabsTrigger>
+          <TabsTrigger value="schedule">Schedule</TabsTrigger>
+          <TabsTrigger value="rfis">RFIs</TabsTrigger>
+          <TabsTrigger value="client-uploads">Client Uploads</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="report">
+          <SpendingCategoriesTable
+            expenses={project.expensesData}
+            budgetItems={project.budgetData}
+          />
+        </TabsContent>
+
+        <TabsContent value="budget">
+          <BudgetTable
+            initialData={project.budgetData}
+            onDataChange={handleBudgetDataChange}
+            // this callback is called by BudgetTable whenever
+            // the Committed Cost column total changes
+            onCommittedTotalChange={setCommittedTotal}
+          />
+        </TabsContent>
+
+        {/* EXPENSES: show ALL expenses, including Get Reimbursed / Change Order */}
+        <TabsContent value="expenses">
+          <ExpensesTable
+            initialData={project.expensesData}
+            onDataChange={handleExpensesDataChange}
+          />
+        </TabsContent>
+
+        {/* CHANGE ORDERS: derived view from expenses */}
+        <TabsContent value="change-orders">
+          <ChangeOrdersTable expenses={changeOrderExpenses} />
+        </TabsContent>
+
+        {/* GET REIMBURSED: derived view from expenses */}
+        <TabsContent value="get-reimbursed">
+          <GetReimbursedTable expenses={reimbursableExpenses} />
+        </TabsContent>
+
+        <TabsContent value="milestones">
+          <MilestonesList initialData={project.milestonesData} />
+        </TabsContent>
+
+        <TabsContent value="applications">
+          <ApplicationsTable
+            initialData={project.applicationsData || []}
+            onDataChange={handleApplicationsDataChange}
+            project={project}
+          />
+        </TabsContent>
+
+        <TabsContent value="drawings">
+          <DrawingsTable initialData={project.drawingsData} />
+        </TabsContent>
+
+        <TabsContent value="schedule">
+          <ScheduleTable initialData={project.scheduleData} />
+        </TabsContent>
+
+        <TabsContent value="rfis">
+          <RfisTable />
+        </TabsContent>
+
+        <TabsContent value="client-uploads">
+          <ClientUploadsTable
+            initialData={project.clientUploadsData}
+            onDataChange={handleClientUploadsDataChange}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {/* NEW: Edit Project dialog, wired to localStorage */}
+      <ProjectEditDialog
+        open={isEditOpen}
+        onOpenChange={setIsEditOpen}
+        project={project}
+        totalCommittedCost={committedTotal}
+        onSave={(partial) => {
+          const updatedProject = { ...project, ...partial } as Project;
+
+          updateProjectData(updatedProject);
+        }}
+      />
+    </div>
+  );
+}
