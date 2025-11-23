@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+
 import {
   Avatar,
   AvatarFallback,
@@ -72,6 +73,7 @@ import {
   DialogTrigger,
   DialogClose,
 } from '@/components/ui/dialog';
+
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -582,6 +584,91 @@ export default function ProjectsPage() {
         : project.status.toLowerCase() === statusFilter
     );
 
+
+    // ---------- Cloud snapshot helpers (Supabase) ----------
+
+  // Save current projects array to Supabase
+  const handleSaveSnapshot = async () => {
+    try {
+      if (!projects || projects.length === 0) {
+        const confirmEmpty = window.confirm(
+          'There are currently no projects. Save an empty snapshot anyway?'
+        );
+        if (!confirmEmpty) return;
+      }
+
+      const res = await fetch('/api/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          payload: {
+            projects,
+            savedAt: new Date().toISOString(),
+          },
+        }),
+      });
+
+      const json = await res.json();
+      if (!json.ok) {
+        console.error('Snapshot save error:', json);
+        alert('Failed to save snapshot: ' + (json.error ?? 'Unknown error'));
+        return;
+      }
+
+      alert('Snapshot saved successfully!');
+    } catch (err: any) {
+      console.error('Snapshot save error (exception):', err);
+      alert('Error saving snapshot: ' + (err.message ?? 'Unknown error'));
+    }
+  };
+
+  // Load latest snapshot from Supabase and replace local projects
+  const handleLoadSnapshot = async () => {
+    try {
+      const res = await fetch('/api/snapshot', {
+        method: 'GET',
+      });
+
+      const json = await res.json();
+      if (!json.ok) {
+        console.error('Snapshot load error:', json);
+        alert('Failed to load snapshot: ' + (json.error ?? 'Unknown error'));
+        return;
+      }
+
+      if (!json.data || json.data.length === 0) {
+        alert('No snapshots found in Supabase yet.');
+        return;
+      }
+
+      // We ordered by created_at DESC in the API, so first element is latest
+      const latest = json.data[0];
+      const payload = latest.payload || {};
+      const loadedProjects = payload.projects || [];
+
+      if (!Array.isArray(loadedProjects)) {
+        alert('Snapshot format is invalid (no projects array).');
+        return;
+      }
+
+      // Replace current projects state
+      setProjects(loadedProjects);
+
+      // Also update localStorage so everything stays in sync
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('projects', JSON.stringify(loadedProjects));
+      }
+
+      alert(
+        `Loaded ${loadedProjects.length} project(s) from latest snapshot.`
+      );
+    } catch (err: any) {
+      console.error('Snapshot load error (exception):', err);
+      alert('Error loading snapshot: ' + (err.message ?? 'Unknown error'));
+    }
+  };
+
+    
   const addProject = async (project: Omit<Project, 'id' | 'team'>) => {
     // payload we send to backend – it can store everything, but only some fields are used now
     const payload: BackendProject = {
@@ -721,16 +808,41 @@ export default function ProjectsPage() {
         </div>
         <Dialog open={isNewProjectOpen} onOpenChange={setIsNewProjectOpen}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              New Project
-            </Button>
+            {/* Right side: snapshot buttons + New Project */}
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleSaveSnapshot}
+        >
+          Save Snapshot to Cloud
+        </Button>
+
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleLoadSnapshot}
+        >
+          Load Latest Snapshot
+        </Button>
+
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => setIsNewProjectOpen(true)}
+        >
+          New Project
+        </Button>
+      </div>
+            
           </DialogTrigger>
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Create New Project</DialogTitle>
               <DialogDescription>
-                Fill out the details below to create a new construction project.
+                Please fill out the details below to create a new construction project.
               </DialogDescription>
             </DialogHeader>
             <NewProjectForm
