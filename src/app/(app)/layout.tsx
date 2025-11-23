@@ -1,84 +1,102 @@
-'use client';
+"use client";
 
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import AppHeader from '@/components/layout/header';
-import { AppSidebar } from '@/components/layout/sidebar';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import * as React from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Menu } from "lucide-react";
 
-export default function AppLayout({
-  children,
-}: {
+import { AppSidebar } from "@/components/layout/sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
+import Header from "@/components/layout/header"; // ⬅ default import
+
+type AppLayoutProps = {
   children: React.ReactNode;
-}) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isChecking, setIsChecking] = useState(true);
-  const router = useRouter();
+};
 
-  useEffect(() => {
-    // Client-side check for a simple "session"
-    try {
-      const session = typeof window !== 'undefined'
-        ? localStorage.getItem('isLoggedIn')
-        : null;
+/**
+ * Routes for the mobile “Menu” dropdown.
+ */
+const mobileLinks: { title: string; href: string }[] = [
+  { title: "Dashboard", href: "/dashboard" },
+  { title: "Projects", href: "/projects" },
+  { title: "Budget", href: "/budget" },
+  { title: "Budget Categories", href: "/budget-categories" },
+  { title: "Schedule", href: "/schedule" },
+  { title: "Tasks", href: "/tasks" },
+  { title: "Documents", href: "/documents" },
+  { title: "Team", href: "/team" },
+  { title: "Photos", href: "/photos" },
+  { title: "Estimating", href: "/estimating" },
+  { title: "Profit & Loss", href: "/profit-loss" },
+  { title: "Reports", href: "/reports" },
+  { title: "Contractors", href: "/contractors" },
+  { title: "Vendors", href: "/vendors" },
+  { title: "Settings", href: "/settings" },
+];
 
-      if (session === 'true') {
-        setIsAuthenticated(true);
-      } else {
-        // Not logged in → go to /login
-        router.push('/login');
-      }
-    } catch (e) {
-      console.error('Error reading auth state:', e);
-      router.push('/login');
-    } finally {
-      setIsChecking(false);
-    }
-  }, [router]);
-
-  // While we’re checking localStorage, show a spinner-ish screen
-  if (isChecking) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center text-sm text-muted-foreground">
-        Checking session…
-      </div>
-    );
-  }
-
-  // If not authenticated, we already pushed to /login above.
-  // Return null so this layout doesn't render anything.
-  if (!isAuthenticated) {
-    return null;
-  }
+function MobileMenu() {
+  const pathname = usePathname();
+  const [open, setOpen] = React.useState(false);
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <AppHeader />
+    <div className="border-b bg-background px-4 py-2 lg:hidden">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-1 text-sm font-medium hover:bg-muted"
+        >
+          <Menu className="h-4 w-4" />
+          <span>Menu</span>
+        </button>
+      </div>
 
-             {/* Mobile top nav (shows only on small screens) */}
-      <nav className="flex items-center justify-between gap-2 border-b bg-background px-4 py-2 md:hidden">
-        <span className="text-sm font-semibold">Menu</span>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <a href="/dashboard" className="rounded border px-2 py-1 hover:bg-muted">
-            Dashboard
-          </a>
-          <a href="/projects" className="rounded border px-2 py-1 hover:bg-muted">
-            Projects
-          </a>
-          <a href="/budget" className="rounded border px-2 py-1 hover:bg-muted">
-            Budget
-          </a>
-          <a href="/profit-loss" className="rounded border px-2 py-1 hover:bg-muted">
-            P & L
-          </a>
+      {open && (
+        <div className="mt-2 max-h-[60vh] space-y-1 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-sm">
+          {mobileLinks.map((link) => {
+            const active =
+              pathname === link.href ||
+              pathname.startsWith(link.href + "/");
+
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className={cn(
+                  "block rounded-md px-2 py-1",
+                  active
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                {link.title}
+              </Link>
+            );
+          })}
         </div>
-      </nav>
+      )}
+    </div>
+  );
+}
 
+export default function AppLayout({ children }: AppLayoutProps) {
+  return (
+    <SidebarProvider defaultOpen>
+      {/* Desktop / tablet sidebar */}
+      <AppSidebar />
 
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+      {/* Main content area */}
+      <SidebarInset className="flex min-h-screen flex-col bg-muted/10">
+        {/* Existing top header (search bar, profile, etc.) */}
+        <Header />
+
+        {/* Mobile-only dropdown nav */}
+        <MobileMenu />
+
+        {/* Page content */}
+        <main className="flex-1 overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
           {children}
         </main>
       </SidebarInset>
