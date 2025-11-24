@@ -65,9 +65,10 @@ export function ExpensesTable({ initialData, onDataChange }: Props) {
   const [groupByCategory, setGroupByCategory] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [editingRowId, setEditingRowId] = React.useState<string | null>(null);
+  const [vendorFilter, setVendorFilter] = React.useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = React.useState<string>('all');
+  const [searchTerm, setSearchTerm] = React.useState<string>('');
 
-  const [vendorFilter, setVendorFilter] = React.useState('all');
-  const [categoryFilter, setCategoryFilter] = React.useState('all');
   const [isImporting, setIsImporting] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -415,6 +416,39 @@ const handleFieldChange = (
 
 
     // ---------- Render helpers ----------
+    
+    const filteredExpenses = React.useMemo(() => {
+    return expenses.filter((exp) => {
+      if (!exp) return false;
+
+      // Vendor filter
+      if (vendorFilter !== 'all' && exp.vendor !== vendorFilter) {
+        return false;
+      }
+
+      // Category filter
+      if (categoryFilter !== 'all' && exp.category !== categoryFilter) {
+        return false;
+      }
+
+      // Global text search across description / reference / invoice #
+      if (searchTerm.trim()) {
+        const needle = searchTerm.trim().toLowerCase();
+        const haystack = [
+          exp.description ?? '',
+          exp.reference ?? '',
+          exp.invoiceNumber ?? '',
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        if (!haystack.includes(needle)) return false;
+      }
+
+      return true;
+    });
+  }, [expenses, vendorFilter, categoryFilter, searchTerm]);
+
 
   const renderRow = (row: AnyExpense, idx: number, indent = false) => {
     const rowId = (row.id as string) ?? generateId(`row-${idx}`);
@@ -472,84 +506,48 @@ const handleFieldChange = (
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* left: group toggle + total */}
         <div className="flex items-center gap-2">
-          <Switch
-            id="group-by-category"
-            checked={groupByCategory}
-            onCheckedChange={(v) => setGroupByCategory(!!v)}
-          />
-          <label
-            htmlFor="group-by-category"
-            className="text-sm text-muted-foreground"
-          >
-            Group by Category
-          </label>
-          <span className="ml-2 text-xs text-muted-foreground">
-            Total: ${totalAll.toFixed(2)}
-          </span>
-        </div>
+  {/* Global search */}
+  <input
+    className="h-9 w-64 rounded border px-2 text-sm"
+    placeholder="Search description, reference, invoice..."
+    value={searchTerm}
+    onChange={(e) => setSearchTerm(e.target.value)}
+  />
 
-        {/* right: filters + import + add */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* All Vendors */}
-          <Select
-            value={vendorFilter}
-            onValueChange={(v) => setVendorFilter(v)}
-          >
-            <SelectTrigger className="h-8 w-[160px] text-xs">
-              <SelectValue placeholder="All Vendors" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Vendors</SelectItem>
-              {vendorOptions.map((v) => (
-                <SelectItem key={v} value={v}>
-                  {v}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+  {/* Vendor filter */}
+  <Select value={vendorFilter} onValueChange={setVendorFilter}>
+    <SelectTrigger className="w-[140px]">
+      <SelectValue placeholder="All Vendors" />
+    </SelectTrigger>
+    <SelectContent>
+      <SelectItem value="all">All Vendors</SelectItem>
+      {Array.from(new Set(expenses.map((e) => e.vendor).filter(Boolean))).map(
+        (vendor) => (
+          <SelectItem key={vendor as string} value={vendor as string}>
+            {vendor}
+          </SelectItem>
+        )
+      )}
+    </SelectContent>
+  </Select>
 
-          {/* All Categories */}
-          <Select
-            value={categoryFilter}
-            onValueChange={(v) => setCategoryFilter(v)}
-          >
-            <SelectTrigger className="h-8 w-[160px] text-xs">
-              <SelectValue placeholder="All Categories" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              {categoryOptions.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isImporting}
-            onClick={handleClickImport}
-          >
-            {isImporting ? 'Importing…' : 'Import'}
-          </Button>
-
-          <Button type="button" size="sm" onClick={() => setIsAddOpen(true)}>
-            + Add Expense
-          </Button>
-
-          {/* hidden file input for import */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-        </div>
-      </div>
+  {/* Category filter */}
+  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+    <SelectTrigger className="w-[140px]">
+      <SelectValue placeholder="All Categories" />
+    </SelectTrigger>
+    <SelectContent>
+      <SelectItem value="all">All Categories</SelectItem>
+      {Array.from(
+        new Set(expenses.map((e) => e.category).filter(Boolean))
+      ).map((cat) => (
+        <SelectItem key={cat as string} value={cat as string}>
+          {cat}
+        </SelectItem>
+      ))}
+    </SelectContent>
+  </Select>
+</div>
 
       {/* Table */}
       <div className="border rounded-md">
