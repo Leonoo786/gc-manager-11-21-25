@@ -8,7 +8,7 @@ import { Menu } from "lucide-react";
 import { AppSidebar } from "@/components/layout/sidebar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import Header from "@/components/layout/header"; // ⬅ default import
+import Header from "@/components/layout/header"; // default export
 
 type AppLayoutProps = {
   children: React.ReactNode;
@@ -56,8 +56,7 @@ function MobileMenu() {
         <div className="mt-2 max-h-[60vh] space-y-1 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-sm">
           {mobileLinks.map((link) => {
             const active =
-              pathname === link.href ||
-              pathname.startsWith(link.href + "/");
+              pathname === link.href || pathname.startsWith(link.href + "/");
 
             return (
               <Link
@@ -83,22 +82,24 @@ function MobileMenu() {
 
 export default function AppLayout({ children }: AppLayoutProps) {
   return (
-    <SidebarProvider defaultOpen>
-      {/* Desktop / tablet sidebar */}
-      <AppSidebar />
+    <SidebarProvider className="min-h-screen w-full flex">
+      {/* Desktop Sidebar */}
+      <div className="hidden lg:flex">
+        <AppSidebar />
+      </div>
+
+      {/* Mobile top menu */}
+      <div className="lg:hidden w-full">
+        <MobileMenu />
+      </div>
 
       {/* Main content area */}
-      <SidebarInset className="flex min-h-screen flex-col bg-muted/10">
-        {/* Existing top header (search bar, profile, etc.) */}
+      <SidebarInset className="flex-1 flex flex-col">
+        {/* Top header (your existing header component) */}
         <Header />
 
-        {/* Mobile-only dropdown nav */}
-        <MobileMenu />
-
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
-          {children}
-        </main>
+        <main className="p-4 flex-1">{children}</main>
       </SidebarInset>
     </SidebarProvider>
   );
