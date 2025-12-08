@@ -3,6 +3,8 @@
 import * as React from 'react';
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { AppShell } from "@/components/app-shell";
+
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -177,6 +179,8 @@ export default function ProjectsPage() {
   }, [projects, searchTerm, statusFilter]);
 
   return (
+
+    <AppShell>
     <div className="flex flex-col gap-8">
       {/* HEADER + SNAPSHOT BUTTONS */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -329,5 +333,6 @@ export default function ProjectsPage() {
         </div>
       )}
     </div>
+  </AppShell>
   );
 }
