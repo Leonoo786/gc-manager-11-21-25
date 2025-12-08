@@ -1,8 +1,8 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 
 type NavItem = {
   href: string;
@@ -11,14 +11,15 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { href: "/projects", label: "Projects" },
-  { href: "/projects/create", label: "New Project" },
+  { href: "/projects-test", label: "Projects Test" },
+  { href: "/dashboard", label: "Dashboard" },
   { href: "/settings", label: "Settings" },
-  // add/edit to match your real sidebar
+  // add/remove to match your real app
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = React.useState(false);
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-50">
@@ -26,7 +27,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-white">
         <span className="font-semibold text-base">GC Manager</span>
 
-        {/* Simple dropdown */}
         <div className="relative">
           <button
             onClick={() => setOpen((prev) => !prev)}

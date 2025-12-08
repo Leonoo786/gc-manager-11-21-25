@@ -315,7 +315,7 @@ export default function ProjectsPage() {
   </div>
 
   {/* Footer */}
-  <CardFooter className="border-t bg-slate-50 px-4 py-3 flex items-center justify-between">
+  <div className="border-t bg-slate-50 px-4 py-3 flex items-center justify-between">
     <p className="text-[11px] text-slate-400 mr-2">
       Last updated just now (local browser data).
     </p>
@@ -325,7 +325,7 @@ export default function ProjectsPage() {
         Open Project
       </Button>
     </Link>
-  </CardFooter>
+  </div>
 </Card>
 
             );
