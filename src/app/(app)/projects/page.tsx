@@ -87,16 +87,12 @@ export default function ProjectsPage() {
   // -------------------- SNAPSHOT: SAVE TO SUPABASE --------------------
   const handleSaveSnapshot = async () => {
   try {
-    console.log("Saving snapshot with", projects.length, "projects");
-
     const res = await fetch("/api/snapshot", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        projects,
-      }),
+      body: JSON.stringify({ projects }),
     });
 
     if (!res.ok) {
@@ -107,8 +103,7 @@ export default function ProjectsPage() {
 
     const data = await res.json();
     console.log("Snapshot save response:", data);
-
-    alert(`Saved snapshot with ${projects.length} project(s).`);
+    alert(`Saved snapshot with ${projects.length} project(s) to the cloud.`);
   } catch (err) {
     console.error("Failed to save snapshot:", err);
     alert("Something went wrong saving the snapshot.");
@@ -116,11 +111,43 @@ export default function ProjectsPage() {
 };
 
 
+
   // -------------------- SNAPSHOT: LOAD FROM SUPABASE --------------------
-  const handleLoadLatestSnapshot = () => {
-  // Reset back to the built-in template projects
-  setProjects(projectsData as Project[]);
-  alert("Reset to default template projects.");
+  const handleLoadLatestSnapshot = async () => {
+  try {
+    const res = await fetch("/api/snapshot");
+    if (!res.ok) {
+      console.error("Snapshot request failed", res.status);
+      alert("Could not load snapshot from cloud.");
+      return;
+    }
+
+    const data = await res.json();
+    console.log("Snapshot load raw data:", data);
+
+    const snapshot = data?.snapshot;
+    const snapshotProjects = snapshot?.projects;
+
+    if (!Array.isArray(snapshotProjects)) {
+      alert(
+        "No valid snapshot found in the cloud. Keeping your current projects."
+      );
+      return;
+    }
+
+    if (snapshotProjects.length === 0) {
+      alert(
+        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
+      );
+      return;
+    }
+
+    setProjects(snapshotProjects as Project[]);
+    alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
+  } catch (err) {
+    console.error("Failed to load snapshot:", err);
+    alert("Something went wrong loading the snapshot. Keeping current projects.");
+  }
 };
 
 

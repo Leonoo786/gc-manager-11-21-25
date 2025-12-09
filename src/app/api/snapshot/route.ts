@@ -1,100 +1,88 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from "next/server";
+import { supabaseServerClient } from "@/lib/supabase-server";
 
-const TABLE_NAME = 'snapshots';
-
-function getSupabaseAdminClient() {
-  const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  // Safety: strip /rest/v1 if it ever appears
-  const url = rawUrl ? rawUrl.replace(/\/rest\/v1\/?$/, '') : undefined;
-
-  if (!url || !serviceKey) {
-    throw new Error(
-      `Supabase env vars missing. url: ${url}, hasServiceKey: ${!!serviceKey}, hasAnonKey: ${!!anonKey}`
-    );
-  }
-
-  // Use service role key on the server so we can insert freely
-  return createClient(url, serviceKey);
-}
-
-// ---------- GET: fetch latest snapshots ----------
-export async function GET() {
+// POST /api/snapshot
+// Body: { projects: Project[] }
+export async function POST(req: Request) {
   try {
-    const supabase = getSupabaseAdminClient();
+    const body = await req.json();
+    const projects = body?.projects;
 
-    const { data, error } = await supabase
-      .from(TABLE_NAME)
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(20);
+    if (!Array.isArray(projects)) {
+      return NextResponse.json(
+        { error: "Invalid payload: projects must be an array" },
+        { status: 400 }
+      );
+    }
+
+    const { data, error } = await supabaseServerClient
+      .from("project_snapshots")
+      .insert([{ projects }])
+      .select()
+      .single();
 
     if (error) {
+      console.error("Supabase insert error:", error);
       return NextResponse.json(
-        { ok: false, error: error.message },
+        { error: "Failed to save snapshot" },
         { status: 500 }
       );
     }
 
     return NextResponse.json(
       {
-        ok: true,
-        count: data?.length ?? 0,
-        data,
+        message: "Snapshot saved",
+        snapshot: data,
       },
       { status: 200 }
     );
-  } catch (err: any) {
+  } catch (err) {
+    console.error("POST /api/snapshot error:", err);
     return NextResponse.json(
-      { ok: false, error: err.message ?? 'Unknown error in GET /api/snapshot' },
+      { error: "Unexpected error saving snapshot" },
       { status: 500 }
     );
   }
 }
 
-// ---------- POST: save a new snapshot ----------
-export async function POST(req: Request) {
+// GET /api/snapshot
+// Returns the latest snapshot
+export async function GET() {
   try {
-    const body = await req.json().catch(() => null);
-
-    if (!body || !body.payload) {
-      return NextResponse.json(
-        { ok: false, error: 'Missing payload in request body' },
-        { status: 400 }
-      );
-    }
-
-    const supabase = getSupabaseAdminClient();
-
-    const { data, error } = await supabase
-      .from(TABLE_NAME)
-      .insert({
-        payload: body.payload,
-      })
-      .select()
-      .single();
+    const { data, error } = await supabaseServerClient
+      .from("project_snapshots")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(1);
 
     if (error) {
+      console.error("Supabase select error:", error);
       return NextResponse.json(
-        { ok: false, error: error.message },
+        { error: "Failed to load snapshot" },
         { status: 500 }
       );
     }
 
+    if (!data || data.length === 0) {
+      return NextResponse.json(
+        { message: "No snapshots found", snapshot: null },
+        { status: 200 }
+      );
+    }
+
+    const latest = data[0];
+
     return NextResponse.json(
       {
-        ok: true,
-        snapshotId: data.id,
-        created_at: data.created_at,
+        message: "Loaded latest snapshot",
+        snapshot: latest,
       },
       { status: 200 }
     );
-  } catch (err: any) {
+  } catch (err) {
+    console.error("GET /api/snapshot error:", err);
     return NextResponse.json(
-      { ok: false, error: err.message ?? 'Unknown error in POST /api/snapshot' },
+      { error: "Unexpected error loading snapshot" },
       { status: 500 }
     );
   }
