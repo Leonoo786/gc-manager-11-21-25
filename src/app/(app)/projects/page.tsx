@@ -116,48 +116,29 @@ export default function ProjectsPage() {
   };
 
   // -------------------- SNAPSHOT: LOAD FROM SUPABASE --------------------
-  const handleLoadSnapshot = async () => {
-    try {
-      const res = await fetch('/api/snapshot', {
-        method: 'GET',
-      });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.ok) {
-        alert(
-          `Failed to load snapshot: ${
-            json.error ? String(json.error) : 'Unknown error'
-          }`,
-        );
-        return;
-      }
-
-      // Expected shape: { ok: true, snapshot: { data: { projects: [...] } } }
-      const snapshot = json.snapshot ?? null;
-      const data = snapshot?.data ?? {};
-      const snapProjects = Array.isArray(data.projects) ? data.projects : [];
-
-      setProjects(snapProjects);
-
-      // Also refresh localStorage so it stays in sync locally
-      try {
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(snapProjects),
-          );
-        }
-      } catch (err) {
-        console.error('Failed to save snapshot projects to localStorage:', err);
-      }
-
-      alert(`Loaded snapshot with ${snapProjects.length} project(s).`);
-    } catch (err: any) {
-      console.error('handleLoadSnapshot error:', err);
-      alert('Error loading snapshot: ' + (err?.message ?? 'Unknown error'));
+  const handleLoadLatestSnapshot = async () => {
+  try {
+    const res = await fetch("/api/snapshot");
+    if (!res.ok) {
+      console.error("Snapshot request failed", res.status);
+      return;
     }
-  };
+
+    const data = await res.json();
+    const snapshotProjects = data?.projects;
+
+    // Only overwrite if we actually got a non-empty array
+    if (Array.isArray(snapshotProjects) && snapshotProjects.length > 0) {
+      setProjects(snapshotProjects);
+    } else {
+      console.warn(
+        "No projects found in latest snapshot; keeping existing projects."
+      );
+    }
+  } catch (err) {
+    console.error("Failed to load snapshot:", err);
+  }
+};
 
   // -------------------- FILTERED PROJECTS FOR DISPLAY --------------------
   const filteredProjects = React.useMemo(() => {
