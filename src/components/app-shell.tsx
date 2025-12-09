@@ -14,7 +14,7 @@ const navItems: NavItem[] = [
   { href: "/projects-test", label: "Projects Test" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/settings", label: "Settings" },
-  // add/remove to match your real app
+  // add/remove to match what you actually want in the mobile menu
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -22,8 +22,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false);
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-slate-50">
-      {/* Mobile top bar */}
+    <div className="min-h-screen flex flex-col bg-slate-50">
+      {/* Mobile top bar ONLY (no sidebar on desktop) */}
       <header className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-white">
         <span className="font-semibold text-base">GC Manager</span>
 
@@ -63,33 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex md:flex-col md:w-64 border-r bg-white">
-        <div className="px-4 py-4 border-b">
-          <span className="font-semibold text-lg">GC Manager</span>
-        </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {navItems.map((item) => {
-            const active = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={[
-                  "block rounded-md px-3 py-2 text-sm",
-                  active
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-700 hover:bg-slate-100",
-                ].join(" ")}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-      </aside>
-
-      {/* Main content */}
+      {/* Main content area */}
       <main className="flex-1 w-full">
         <div className="max-w-6xl mx-auto w-full px-3 md:px-6 py-4 md:py-6">
           {children}
