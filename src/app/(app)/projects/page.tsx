@@ -117,53 +117,12 @@ export default function ProjectsPage() {
 
 
   // -------------------- SNAPSHOT: LOAD FROM SUPABASE --------------------
-  const handleLoadLatestSnapshot = async () => {
-  try {
-    const res = await fetch("/api/snapshot");
-    if (!res.ok) {
-      console.error("Snapshot request failed", res.status);
-      alert("Could not load snapshot from cloud.");
-      return;
-    }
-
-    const data = await res.json();
-    console.log("Snapshot load raw data:", data);
-
-    // Try different possible shapes:
-    let snapshotProjects: unknown = null;
-
-    if (Array.isArray((data as any)?.projects)) {
-      snapshotProjects = (data as any).projects;
-    } else if (Array.isArray((data as any)?.snapshot?.projects)) {
-      snapshotProjects = (data as any).snapshot.projects;
-    } else if (Array.isArray((data as any)?.[0]?.projects)) {
-      snapshotProjects = (data as any)[0].projects;
-    }
-
-    if (!Array.isArray(snapshotProjects)) {
-      console.warn("No valid snapshot data found.");
-      alert(
-        "No valid snapshot found in the cloud. Keeping your current projects."
-      );
-      return;
-    }
-
-    if (snapshotProjects.length === 0) {
-      console.warn("Snapshot has 0 projects; keeping existing projects.");
-      alert(
-        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
-      );
-      return;
-    }
-
-    // ✅ Real data: update state
-    setProjects(snapshotProjects as Project[]);
-    alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
-  } catch (err) {
-    console.error("Failed to load snapshot:", err);
-    alert("Something went wrong loading the snapshot. Keeping current projects.");
-  }
+  const handleLoadLatestSnapshot = () => {
+  // Reset back to the built-in template projects
+  setProjects(projectsData as Project[]);
+  alert("Reset to default template projects.");
 };
+
 
 
   // -------------------- FILTERED PROJECTS FOR DISPLAY --------------------
