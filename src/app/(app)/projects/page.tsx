@@ -121,24 +121,38 @@ export default function ProjectsPage() {
     const res = await fetch("/api/snapshot");
     if (!res.ok) {
       console.error("Snapshot request failed", res.status);
+      alert("Could not load snapshot from cloud.");
       return;
     }
 
     const data = await res.json();
     const snapshotProjects = data?.projects;
 
-    // Only overwrite if we actually got a non-empty array
-    if (Array.isArray(snapshotProjects) && snapshotProjects.length > 0) {
-      setProjects(snapshotProjects);
-    } else {
-      console.warn(
-        "No projects found in latest snapshot; keeping existing projects."
-      );
+    // No valid array at all
+    if (!Array.isArray(snapshotProjects)) {
+      console.warn("No valid snapshot data found.");
+      alert("No snapshot found in the cloud. Keeping your current projects.");
+      return;
     }
+
+    // Array exists but is empty
+    if (snapshotProjects.length === 0) {
+      console.warn("Snapshot has 0 projects; keeping existing projects.");
+      alert(
+        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' once you see the projects you want to store."
+      );
+      return;
+    }
+
+    // ✅ Real data: update state
+    setProjects(snapshotProjects);
+    alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
   } catch (err) {
     console.error("Failed to load snapshot:", err);
+    alert("Something went wrong loading the snapshot. Keeping current projects.");
   }
 };
+
 
   // -------------------- FILTERED PROJECTS FOR DISPLAY --------------------
   const filteredProjects = React.useMemo(() => {
