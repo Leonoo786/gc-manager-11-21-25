@@ -9,7 +9,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   );
 }
 
-// This client is ONLY for server-side use (API routes, etc.)
+// Server-side Supabase client (for API routes only)
 export const supabaseServerClient = createClient(
   SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
