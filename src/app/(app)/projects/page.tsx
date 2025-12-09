@@ -86,34 +86,35 @@ export default function ProjectsPage() {
 
   // -------------------- SNAPSHOT: SAVE TO SUPABASE --------------------
   const handleSaveSnapshot = async () => {
-    try {
-      const res = await fetch('/api/snapshot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          projects,
-        }),
-      });
+  try {
+    console.log("Saving snapshot with", projects.length, "projects");
 
-      const json = await res.json();
+    const res = await fetch("/api/snapshot", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projects,
+      }),
+    });
 
-      if (!res.ok || !json.ok) {
-        alert(
-          `Failed to save snapshot: ${
-            json.error ? String(json.error) : 'Unknown error'
-          }`,
-        );
-        return;
-      }
-
-      alert('Snapshot saved to cloud successfully.');
-    } catch (err: any) {
-      console.error('handleSaveSnapshot error:', err);
-      alert('Error saving snapshot: ' + (err?.message ?? 'Unknown error'));
+    if (!res.ok) {
+      console.error("Snapshot save failed with status", res.status);
+      alert("Could not save snapshot to cloud.");
+      return;
     }
-  };
+
+    const data = await res.json();
+    console.log("Snapshot save response:", data);
+
+    alert(`Saved snapshot with ${projects.length} project(s).`);
+  } catch (err) {
+    console.error("Failed to save snapshot:", err);
+    alert("Something went wrong saving the snapshot.");
+  }
+};
+
 
   // -------------------- SNAPSHOT: LOAD FROM SUPABASE --------------------
   const handleLoadLatestSnapshot = async () => {
@@ -126,26 +127,37 @@ export default function ProjectsPage() {
     }
 
     const data = await res.json();
-    const snapshotProjects = data?.projects;
+    console.log("Snapshot load raw data:", data);
 
-    // No valid array at all
+    // Try different possible shapes:
+    let snapshotProjects: unknown = null;
+
+    if (Array.isArray((data as any)?.projects)) {
+      snapshotProjects = (data as any).projects;
+    } else if (Array.isArray((data as any)?.snapshot?.projects)) {
+      snapshotProjects = (data as any).snapshot.projects;
+    } else if (Array.isArray((data as any)?.[0]?.projects)) {
+      snapshotProjects = (data as any)[0].projects;
+    }
+
     if (!Array.isArray(snapshotProjects)) {
       console.warn("No valid snapshot data found.");
-      alert("No snapshot found in the cloud. Keeping your current projects.");
+      alert(
+        "No valid snapshot found in the cloud. Keeping your current projects."
+      );
       return;
     }
 
-    // Array exists but is empty
     if (snapshotProjects.length === 0) {
       console.warn("Snapshot has 0 projects; keeping existing projects.");
       alert(
-        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' once you see the projects you want to store."
+        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
       );
       return;
     }
 
     // ✅ Real data: update state
-    setProjects(snapshotProjects);
+    setProjects(snapshotProjects as Project[]);
     alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
   } catch (err) {
     console.error("Failed to load snapshot:", err);
