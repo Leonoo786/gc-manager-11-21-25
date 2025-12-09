@@ -172,7 +172,7 @@ export default function ProjectsPage() {
   onClick={handleLoadLatestSnapshot}
   className="btn ..."
 >
-  Load Latest Snapshot
+  Reset to Default Projects
 </button>
 
         </div>
