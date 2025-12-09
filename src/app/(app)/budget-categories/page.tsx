@@ -179,6 +179,50 @@ export default function BudgetCategoriesPage() {
     setCategories((prev) => prev.filter((row) => row.id !== id));
   };
 
+    // ---------- IMPORT DEFAULT CATEGORIES ----------
+  const handleImportDefaults = () => {
+    setCategories((prev) => {
+      // Build a set of existing category + costType combos (case-insensitive)
+      const existingKeys = new Set(
+        prev.map((c) =>
+          `${c.category.trim().toLowerCase()}|${c.costType
+            .trim()
+            .toLowerCase()}`
+        )
+      );
+
+      // Find current max id so we can keep ids unique
+      let currentMaxId = prev.length
+        ? Math.max(...prev.map((c) => c.id))
+        : 0;
+
+      const toAdd: BudgetCategory[] = [];
+
+      for (const item of defaultCategories) {
+        const key = `${item.category.trim().toLowerCase()}|${item.costType
+          .trim()
+          .toLowerCase()}`;
+        if (!existingKeys.has(key)) {
+          currentMaxId += 1;
+          toAdd.push({
+            id: currentMaxId,
+            category: item.category,
+            costType: item.costType,
+          });
+        }
+      }
+
+      if (toAdd.length === 0) {
+        alert("All default budget categories are already imported.");
+        return prev;
+      }
+
+      alert(`Imported ${toAdd.length} default budget categor${toAdd.length === 1 ? "y" : "ies"}.`);
+      return [...prev, ...toAdd];
+    });
+  };
+
+
   // ---------- JSX ----------
   return (
     <div className="space-y-4">
@@ -225,13 +269,22 @@ export default function BudgetCategoriesPage() {
           />
         </div>
 
-        <button
-          type="submit"
-          className="inline-flex items-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-        >
-          + Add Category
-        </button>
-      </form>
+          <button
+    type="submit"
+    className="inline-flex items-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+  >
+    + Add Category
+  </button>
+
+  <button
+    type="button"
+    onClick={handleImportDefaults}
+    className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+  >
+    Import Defaults
+  </button>
+</form>
+
 
       {/* Table */}
       <div className="rounded-lg border bg-white">

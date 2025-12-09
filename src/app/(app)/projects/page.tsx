@@ -1,330 +1,370 @@
-'use client';
+"use client";
 
-import * as React from 'react';
-import Link from "next/link";
-import { cn } from "@/lib/utils";
+import * as React from "react";
 import { AppShell } from "@/components/app-shell";
+import { projectsData } from "./projects-data";
+import type { Project } from "./projects-data";
 
+const STORAGE_KEY = "projects";
 
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from '@/components/ui/card';
-
-import { projectsData } from './projects-data';
-import type { Project } from './projects-data';
-
-const STORAGE_KEY = 'projects';
+type StatusFilter = "all" | Project["status"];
 
 export default function ProjectsPage() {
   const [projects, setProjects] = React.useState<Project[]>([]);
-  const [isMounted, setIsMounted] = React.useState(false);
+  const [isLoaded, setIsLoaded] = React.useState(false);
 
-  const [searchTerm, setSearchTerm] = React.useState('');
-  const [statusFilter, setStatusFilter] = React.useState('all');
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
 
-  // -------------------- INITIAL LOAD (localStorage + template) --------------------
+  // ---------- INITIAL LOAD (localStorage → fallback to projectsData) ----------
   React.useEffect(() => {
-    let isCancelled = false;
+    if (typeof window === "undefined") return;
 
-    function loadProjects() {
-      let localProjects: Project[] = [];
-
-      // 1) Try localStorage
-      try {
-        if (typeof window !== 'undefined') {
-          const saved = window.localStorage.getItem(STORAGE_KEY);
-          if (saved) {
-            localProjects = JSON.parse(saved) as Project[];
-          }
-        }
-      } catch (err) {
-        console.error('Failed to read projects from localStorage:', err);
-      }
-
-      // 2) Fallback to projectsData if nothing in localStorage
-      const baseProjects =
-        localProjects.length > 0
-          ? localProjects
-          : (projectsData as Project[]);
-
-      if (!isCancelled) {
-        setProjects(baseProjects);
-        setIsMounted(true);
-      }
-    }
-
-    loadProjects();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
-
-  // -------------------- PERSIST TO LOCALSTORAGE --------------------
-  React.useEffect(() => {
-    if (!isMounted) return;
     try {
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Project[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setProjects(parsed);
+          setIsLoaded(true);
+          return;
+        }
       }
     } catch (err) {
-      console.error('Failed to save projects to localStorage:', err);
+      console.error("Failed to read projects from localStorage:", err);
     }
-  }, [projects, isMounted]);
 
-  // -------------------- SNAPSHOT: SAVE TO SUPABASE --------------------
+    // Fallback: use template data
+    setProjects(projectsData);
+    setIsLoaded(true);
+  }, []);
+
+  // ---------- SAVE TO LOCALSTORAGE ----------
+  React.useEffect(() => {
+    if (!isLoaded || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    } catch (err) {
+      console.error("Failed to save projects to localStorage:", err);
+    }
+  }, [projects, isLoaded]);
+
+  // ---------- SNAPSHOT: SAVE TO SUPABASE ----------
   const handleSaveSnapshot = async () => {
-  try {
-    const res = await fetch("/api/snapshot", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ projects }),
-    });
+    try {
+      const res = await fetch("/api/snapshot", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ projects }),
+      });
 
-    if (!res.ok) {
-      console.error("Snapshot save failed with status", res.status);
-      alert("Could not save snapshot to cloud.");
-      return;
+      if (!res.ok) {
+        console.error("Snapshot save failed with status", res.status);
+        alert("Could not save snapshot to cloud.");
+        return;
+      }
+
+      const data = await res.json();
+      console.log("Snapshot save response:", data);
+      alert(`Saved snapshot with ${projects.length} project(s) to the cloud.`);
+    } catch (err) {
+      console.error("Failed to save snapshot:", err);
+      alert("Something went wrong saving the snapshot.");
     }
+  };
 
-    const data = await res.json();
-    console.log("Snapshot save response:", data);
-    alert(`Saved snapshot with ${projects.length} project(s) to the cloud.`);
-  } catch (err) {
-    console.error("Failed to save snapshot:", err);
-    alert("Something went wrong saving the snapshot.");
-  }
-};
-
-
-
-  // -------------------- SNAPSHOT: LOAD FROM SUPABASE --------------------
+  // ---------- SNAPSHOT: LOAD FROM SUPABASE ----------
   const handleLoadLatestSnapshot = async () => {
-  try {
-    const res = await fetch("/api/snapshot");
-    if (!res.ok) {
-      console.error("Snapshot request failed", res.status);
-      alert("Could not load snapshot from cloud.");
-      return;
+    try {
+      const res = await fetch("/api/snapshot");
+      if (!res.ok) {
+        console.error("Snapshot request failed", res.status);
+        alert("Could not load snapshot from cloud.");
+        return;
+      }
+
+      const data = await res.json();
+      console.log("Snapshot load raw data:", data);
+
+      const snapshot = data?.snapshot;
+      const snapshotProjects = snapshot?.projects;
+
+      if (!Array.isArray(snapshotProjects)) {
+        alert(
+          "No valid snapshot found in the cloud. Keeping your current projects."
+        );
+        return;
+      }
+
+      if (snapshotProjects.length === 0) {
+        alert(
+          "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
+        );
+        return;
+      }
+
+      setProjects(snapshotProjects as Project[]);
+      alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
+    } catch (err) {
+      console.error("Failed to load snapshot:", err);
+      alert("Something went wrong loading the snapshot. Keeping current projects.");
     }
+  };
 
-    const data = await res.json();
-    console.log("Snapshot load raw data:", data);
+  // ---------- FILTERED PROJECTS ----------
+  const visibleProjects = React.useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
 
-    const snapshot = data?.snapshot;
-    const snapshotProjects = snapshot?.projects;
+    return projects.filter((project) => {
+      if (statusFilter !== "all" && project.status !== statusFilter) {
+        return false;
+      }
 
-    if (!Array.isArray(snapshotProjects)) {
-      alert(
-        "No valid snapshot found in the cloud. Keeping your current projects."
+      if (!term) return true;
+
+      const fieldsToSearch = [
+        project.name,
+        project.client,
+        project.city ?? "",
+        project.zipCode ?? "",
+      ];
+
+      return fieldsToSearch.some((field) =>
+        field.toLowerCase().includes(term)
       );
-      return;
-    }
-
-    if (snapshotProjects.length === 0) {
-      alert(
-        "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
-      );
-      return;
-    }
-
-    setProjects(snapshotProjects as Project[]);
-    alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
-  } catch (err) {
-    console.error("Failed to load snapshot:", err);
-    alert("Something went wrong loading the snapshot. Keeping current projects.");
-  }
-};
-
-
-
-  // -------------------- FILTERED PROJECTS FOR DISPLAY --------------------
-  const filteredProjects = React.useMemo(() => {
-    const search = searchTerm.trim().toLowerCase();
-
-    return projects.filter((p) => {
-      const matchesSearch =
-        search === '' ||
-        p.name.toLowerCase().includes(search) ||
-        p.client.toLowerCase().includes(search);
-
-      const status = (p.status ?? '').toLowerCase();
-      const matchesStatus =
-        statusFilter === 'all' ||
-        status === statusFilter.toLowerCase();
-
-      return matchesSearch && matchesStatus;
     });
   }, [projects, searchTerm, statusFilter]);
 
+  // ---------- UI ----------
   return (
-
     <AppShell>
-    <div className="flex flex-col gap-8">
-      {/* HEADER + SNAPSHOT BUTTONS */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Projects
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage all your projects, then save/load snapshots to the cloud.
-          </p>
+      <div className="space-y-6">
+        {/* Page header + actions */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-lg md:text-2xl font-semibold">Projects</h1>
+            <p className="text-sm text-slate-500">
+              Overview of all active and completed jobs.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleSaveSnapshot}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            >
+              Save Snapshot to Cloud
+            </button>
+            <button
+              type="button"
+              onClick={handleLoadLatestSnapshot}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+            >
+              Load Latest Snapshot
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleSaveSnapshot}
-          >
-            Save Snapshot to Cloud
-          </Button>
-          <button
-  onClick={handleLoadLatestSnapshot}
-  className="btn ..."
->
-  Reset to Default Projects
-</button>
+        {/* Filters row */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-3">
+          {/* Search */}
+          <div className="flex-1 min-w-[220px]">
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Search
+            </label>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full rounded-md border px-2 py-1.5 text-sm"
+              placeholder="Search by project name, client, city, or zip"
+            />
+          </div>
 
+          {/* Status filter */}
+          <div className="w-full sm:w-48">
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Status
+            </label>
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as StatusFilter)
+              }
+              className="w-full rounded-md border px-2 py-1.5 text-sm bg-white"
+            >
+              <option value="all">All statuses</option>
+              <option value="Active">Active</option>
+              <option value="Planning">Planning</option>
+              <option value="Completed">Completed</option>
+              <option value="On Hold">On Hold</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Projects grid */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {visibleProjects.length === 0 ? (
+            <div className="col-span-full rounded-lg border bg-white px-4 py-6 text-sm text-slate-500">
+              No projects found. Try adjusting your filters or add a new project.
+            </div>
+          ) : (
+            visibleProjects.map((project) => {
+              const finalBid = project.finalBid ?? project.budget;
+              const spent = project.spent;
+              const remaining = Math.max(finalBid - spent, 0);
+              const percentSpent =
+                finalBid > 0
+                  ? Math.min(Math.round((spent / finalBid) * 100), 999)
+                  : 0;
+              const profitLoss = finalBid - spent; // positive = under budget
+
+              const locationParts = [project.city, project.zipCode].filter(
+                Boolean
+              );
+              const location = locationParts.join(" ");
+
+              const statusColor =
+                project.status === "Active"
+                  ? "bg-green-100 text-green-700"
+                  : project.status === "Planning"
+                  ? "bg-amber-100 text-amber-700"
+                  : project.status === "Completed"
+                  ? "bg-slate-100 text-slate-700"
+                  : "bg-purple-100 text-purple-700"; // On Hold
+
+              return (
+                <article
+                  key={project.id}
+                  className="flex h-full flex-col overflow-hidden rounded-lg border bg-white"
+                >
+                  {/* Card header */}
+                  <div className="border-b bg-slate-50 px-4 py-3 flex items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Project
+                      </div>
+                      <div className="text-sm font-semibold leading-tight">
+                        {project.name}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {location && <span>{location}</span>}
+                      </div>
+                    </div>
+
+                    <span
+                      className={
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium " +
+                        statusColor
+                      }
+                    >
+                      {project.status}
+                    </span>
+                  </div>
+
+                  {/* Card body */}
+                  <div className="flex-1 px-4 py-3 space-y-3">
+                    {/* Client */}
+                    <div className="text-xs text-slate-500">
+                      Client:{" "}
+                      <span className="font-medium text-slate-800">
+                        {project.client}
+                      </span>
+                    </div>
+
+                    {/* Budget summary */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs text-slate-500">
+                        <span>Budget</span>
+                        <span>
+                          ${finalBid.toLocaleString()}{" "}
+                          <span className="text-slate-400">Final Bid</span>
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs text-slate-500">
+                        <span>Spent</span>
+                        <span>${spent.toLocaleString()}</span>
+                      </div>
+
+                      {/* Progress bar (budget used) */}
+                      <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100">
+                        <div
+                          className="h-1.5 rounded-full bg-sky-500"
+                          style={{
+                            width: `${Math.min(percentSpent, 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] text-slate-500 mt-1">
+                        <span>{percentSpent}% of budget used</span>
+                        <span>
+                          Remaining: ${remaining.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Overall project progress */}
+                    <div className="space-y-1 pt-1 border-t border-dashed border-slate-200 mt-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">
+                          Overall Progress
+                        </span>
+                        <span className="text-xs font-medium text-slate-700">
+                          {project.progress}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-slate-100">
+                        <div
+                          className="h-1.5 rounded-full bg-emerald-500"
+                          style={{
+                            width: `${Math.min(project.progress, 100)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Profit / Loss */}
+                    <div className="flex items-center justify-between pt-1 border-t border-dashed border-slate-200 mt-2">
+                      <span className="text-xs text-slate-500">
+                        Profit / Loss
+                      </span>
+                      <span
+                        className={
+                          "text-xs font-semibold " +
+                          (profitLoss > 0
+                            ? "text-green-600"
+                            : profitLoss < 0
+                            ? "text-red-600"
+                            : "text-slate-700")
+                        }
+                      >
+                        {profitLoss >= 0 ? "+" : "-"}$
+                        {Math.abs(profitLoss).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card footer */}
+                  <div className="border-t bg-slate-50 px-4 py-2 flex items-center justify-between">
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-sky-700 hover:underline"
+                    >
+                      View Details
+                    </button>
+                    <span className="text-[11px] text-slate-400">
+                      Start: {project.startDate} · End: {project.endDate}
+                    </span>
+                  </div>
+                </article>
+              );
+            })
+          )}
         </div>
       </div>
-
-      {/* SEARCH + FILTER ROW */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1 min-w-[220px]">
-          <Input
-            placeholder="Search by project name or client…"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-
-        <div className="w-[180px]">
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => setStatusFilter(value)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="completed">Completed</SelectItem>
-              <SelectItem value="archived">Archived</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* PROJECT LIST */}
-      {filteredProjects.length === 0 ? (
-        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-          No projects match your filters.
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filteredProjects.map((project) => {
-            const bid =
-              typeof project.finalBidToCustomer === 'number'
-                ? project.finalBidToCustomer
-                : 0;
-
-            return (
-              <Card
-  key={project.id}
-  className="flex flex-col overflow-hidden shadow-sm hover:shadow-md transition-shadow border-slate-200"
->
-  {/* Header strip */}
-  <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-4 py-3 flex items-center justify-between">
-    <div>
-      <p className="text-[10px] uppercase tracking-[0.15em] text-slate-300/80">
-        Project
-      </p>
-      <h3 className="text-lg font-semibold text-white leading-tight">
-        {project.name}
-      </h3>
-      <p className="text-xs text-slate-200/80 mt-0.5">
-        {project.client || "Client not set"}
-      </p>
-    </div>
-
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide",
-        project.status === "Completed"
-          ? "bg-emerald-100 text-emerald-700"
-          : project.status === "On Hold"
-          ? "bg-amber-100 text-amber-700"
-          : "bg-sky-100 text-sky-700"
-      )}
-    >
-      {project.status || "Active"}
-    </span>
-  </div>
-
-  {/* Body */}
-  <div className="px-4 py-3 space-y-3 bg-white">
-    <div className="flex items-center justify-between text-xs text-slate-500">
-      <span>Client</span>
-      <span className="font-medium text-slate-900">
-        {project.client || "Not specified"}
-      </span>
-    </div>
-
-    <div className="flex items-center justify-between text-xs text-slate-500">
-      <span>Final Bid to Customer</span>
-      <span className="font-semibold text-emerald-600">
-        $
-        {Number(project.finalBidToCustomer || 0).toLocaleString("en-US", {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
-        })}
-      </span>
-    </div>
-
-    {/* Little hint line at bottom of body */}
-    <p className="text-[11px] text-slate-400">
-      Track budget, schedule, and documents for this job from the project
-      dashboard.
-    </p>
-  </div>
-
-  {/* Footer */}
-  <div className="border-t bg-slate-50 px-4 py-3 flex items-center justify-between">
-    <p className="text-[11px] text-slate-400 mr-2">
-      Last updated just now (local browser data).
-    </p>
-
-    <Link href={`/projects/${project.id}`}>
-      <Button size="sm" variant="default">
-        Open Project
-      </Button>
-    </Link>
-  </div>
-</Card>
-
-            );
-          })}
-        </div>
-      )}
-    </div>
-  </AppShell>
+    </AppShell>
   );
 }
