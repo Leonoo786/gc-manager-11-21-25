@@ -197,14 +197,13 @@ export default function ProjectsPage() {
           >
             Save Snapshot to Cloud
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleLoadSnapshot}
-          >
-            Load Latest Snapshot
-          </Button>
+          <button
+  onClick={handleLoadLatestSnapshot}
+  className="btn ..."
+>
+  Load Latest Snapshot
+</button>
+
         </div>
       </div>
 
