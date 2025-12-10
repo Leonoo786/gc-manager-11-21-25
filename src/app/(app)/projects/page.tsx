@@ -1,370 +1,1100 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { AppShell } from "@/components/app-shell";
-import { projectsData } from "./projects-data";
-import type { Project } from "./projects-data";
+import * as React from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  MoreHorizontal,
+  Plus,
+  CloudUpload,
+  CloudDownload,
+  UploadCloud,
+} from 'lucide-react';
 
-const STORAGE_KEY = "projects";
+import {
+  projectsData as templateProjects,
+  type Project,
+} from './projects-data';
 
-type StatusFilter = "all" | Project["status"];
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+
+const STORAGE_KEY = 'projects';
+
+type StatusFilter = 'all' | Project['status'];
+
+type ProjectFormState = {
+  id?: string; // present in edit mode
+  name: string;
+  client: string;
+  streetAddress: string;
+  city: string;
+  zipCode: string;
+  description: string;
+  internalContractAmount: string; // kept in form only
+  finalBid: string;
+  status: Project['status'];
+  progress: string;
+  startDate: string;
+  endDate: string;
+  imageUrl: string; // data URL or external URL
+};
+
+function formatMoney(value: number) {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function parseMoneyInput(raw: string): number {
+  if (!raw) return 0;
+  const cleaned = raw.replace(/[\$,]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
 
 export default function ProjectsPage() {
+  const router = useRouter();
+
   const [projects, setProjects] = React.useState<Project[]>([]);
-  const [isLoaded, setIsLoaded] = React.useState(false);
+  const [isMounted, setIsMounted] = React.useState(false);
 
-  const [searchTerm, setSearchTerm] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const [statusFilter, setStatusFilter] =
+    React.useState<StatusFilter>('all');
 
-  // ---------- INITIAL LOAD (localStorage → fallback to projectsData) ----------
+  const [isSavingSnapshot, setIsSavingSnapshot] =
+    React.useState(false);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] =
+    React.useState(false);
+
+  // unified “Create / Edit Project” dialog
+  const [projectForm, setProjectForm] =
+    React.useState<ProjectFormState | null>(null);
+  const fileInputRef =
+    React.useRef<HTMLInputElement | null>(null);
+
+  const dialogOpen = projectForm !== null;
+
+  // ---------- Initial load ----------
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === 'undefined') return;
 
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Project[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setProjects(parsed);
-          setIsLoaded(true);
-          return;
-        }
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        setProjects(JSON.parse(saved) as Project[]);
+      } else {
+        setProjects(templateProjects as Project[]);
       }
     } catch (err) {
-      console.error("Failed to read projects from localStorage:", err);
+      console.error('Failed to read projects from localStorage:', err);
+      setProjects(templateProjects as Project[]);
+    } finally {
+      setIsMounted(true);
     }
-
-    // Fallback: use template data
-    setProjects(projectsData);
-    setIsLoaded(true);
   }, []);
 
-  // ---------- SAVE TO LOCALSTORAGE ----------
+  // ---------- Persist to localStorage ----------
   React.useEffect(() => {
-    if (!isLoaded || typeof window === "undefined") return;
+    if (!isMounted) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(projects),
+        );
+      }
     } catch (err) {
-      console.error("Failed to save projects to localStorage:", err);
+      console.error('Failed to save projects to localStorage:', err);
     }
-  }, [projects, isLoaded]);
+  }, [projects, isMounted]);
 
-  // ---------- SNAPSHOT: SAVE TO SUPABASE ----------
+  // ---------- Snapshot: save to Supabase ----------
   const handleSaveSnapshot = async () => {
     try {
-      const res = await fetch("/api/snapshot", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      setIsSavingSnapshot(true);
+      const res = await fetch('/api/snapshot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projects }),
       });
 
       if (!res.ok) {
-        console.error("Snapshot save failed with status", res.status);
-        alert("Could not save snapshot to cloud.");
+        console.error(await res.text());
+        alert('Failed to save snapshot to cloud.');
         return;
       }
 
-      const data = await res.json();
-      console.log("Snapshot save response:", data);
-      alert(`Saved snapshot with ${projects.length} project(s) to the cloud.`);
+      alert('Snapshot saved to cloud.');
     } catch (err) {
-      console.error("Failed to save snapshot:", err);
-      alert("Something went wrong saving the snapshot.");
+      console.error(err);
+      alert('Error while saving snapshot.');
+    } finally {
+      setIsSavingSnapshot(false);
     }
   };
 
-  // ---------- SNAPSHOT: LOAD FROM SUPABASE ----------
-  const handleLoadLatestSnapshot = async () => {
+  // ---------- Snapshot: load from Supabase ----------
+  const handleLoadSnapshot = async () => {
     try {
-      const res = await fetch("/api/snapshot");
+      setIsLoadingSnapshot(true);
+      const res = await fetch('/api/snapshot', {
+        method: 'GET',
+      });
+
       if (!res.ok) {
-        console.error("Snapshot request failed", res.status);
-        alert("Could not load snapshot from cloud.");
+        console.error(await res.text());
+        alert(
+          'No valid snapshot found in the cloud. Keeping your current projects.',
+        );
         return;
       }
 
       const data = await res.json();
-      console.log("Snapshot load raw data:", data);
 
-      const snapshot = data?.snapshot;
-      const snapshotProjects = snapshot?.projects;
-
-      if (!Array.isArray(snapshotProjects)) {
+      if (Array.isArray(data.projects) && data.projects.length > 0) {
+        setProjects(data.projects as Project[]);
         alert(
-          "No valid snapshot found in the cloud. Keeping your current projects."
+          `Loaded snapshot with ${data.projects.length} projects from the cloud.`,
         );
-        return;
-      }
-
-      if (snapshotProjects.length === 0) {
+      } else {
         alert(
-          "Latest snapshot has 0 projects, so I'm keeping your current projects.\n\nClick 'Save Snapshot to Cloud' after you see the projects you want to store."
+          'No projects found in the latest snapshot. Keeping your current projects.',
         );
-        return;
       }
-
-      setProjects(snapshotProjects as Project[]);
-      alert(`Loaded snapshot with ${snapshotProjects.length} project(s).`);
     } catch (err) {
-      console.error("Failed to load snapshot:", err);
-      alert("Something went wrong loading the snapshot. Keeping current projects.");
+      console.error(err);
+      alert('Error while loading snapshot.');
+    } finally {
+      setIsLoadingSnapshot(false);
     }
   };
 
-  // ---------- FILTERED PROJECTS ----------
-  const visibleProjects = React.useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+  // ---------- Open dialog: create ----------
+  const openCreateProjectDialog = () => {
+    setProjectForm({
+      id: undefined,
+      name: '',
+      client: '',
+      streetAddress: '',
+      city: '',
+      zipCode: '',
+      description: '',
+      internalContractAmount: '',
+      finalBid: '',
+      status: 'Planning',
+      progress: '0',
+      startDate: '',
+      endDate: '',
+      imageUrl: '',
+    });
+  };
 
-    return projects.filter((project) => {
-      if (statusFilter !== "all" && project.status !== statusFilter) {
-        return false;
-      }
+  // ---------- Open dialog: edit ----------
+  const openEditProjectDialog = (project: Project) => {
+    setProjectForm({
+      id: project.id,
+      name: project.name ?? '',
+      client: project.client ?? '',
+      streetAddress: project.streetAddress ?? '',
+      city: project.city ?? '',
+      zipCode: project.zipCode ?? '',
+      description: project.description ?? '',
+      internalContractAmount: '', // we don't currently persist this
+      finalBid:
+        project.finalBid != null
+          ? String(project.finalBid)
+          : '',
+      status: project.status,
+      progress: String(project.progress ?? 0),
+      startDate: project.startDate ?? '',
+      endDate: project.endDate ?? '',
+      imageUrl: project.imageUrl ?? '',
+    });
+  };
 
-      if (!term) return true;
+  const closeProjectDialog = () => setProjectForm(null);
 
-      const fieldsToSearch = [
-        project.name,
-        project.client,
-        project.city ?? "",
-        project.zipCode ?? "",
-      ];
+  // ---------- Save / update project from dialog ----------
+  const handleProjectFormSubmit = () => {
+    if (!projectForm) return;
 
-      return fieldsToSearch.some((field) =>
-        field.toLowerCase().includes(term)
+    const trimmedName = projectForm.name.trim();
+    if (!trimmedName) {
+      alert('Please enter a project name.');
+      return;
+    }
+
+    const finalBidNumber = parseMoneyInput(projectForm.finalBid);
+    const progressNumber =
+      Number(projectForm.progress) || 0;
+
+    const baseFields = {
+      name: trimmedName,
+      client:
+        projectForm.client.trim() || 'ABC Development Corp',
+      status: projectForm.status,
+      progress: Math.max(0, Math.min(100, progressNumber)),
+      startDate: projectForm.startDate,
+      endDate: projectForm.endDate,
+      streetAddress: projectForm.streetAddress.trim(),
+      city: projectForm.city.trim(),
+      zipCode: projectForm.zipCode.trim(),
+      description: projectForm.description.trim(),
+      finalBid: finalBidNumber,
+      imageUrl: projectForm.imageUrl,
+      imageHint: trimmedName,
+    };
+
+    const isEditMode = !!projectForm.id;
+
+    if (isEditMode) {
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectForm.id
+            ? {
+                ...p,
+                ...baseFields,
+              }
+            : p,
+        ),
       );
+    } else {
+      const id =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `proj-${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 8)}`;
+
+      const newProject: Project = {
+        id,
+        ...baseFields,
+        budget: 0,
+        spent: 0,
+        team: [],
+        budgetData: [],
+        expensesData: [],
+        getReimbursedData: [],
+        milestonesData: [],
+        drawingsData: [],
+        scheduleData: [],
+        clientUploadsData: [],
+        changeOrdersData: [],
+        applicationsData: [],
+      };
+
+      setProjects((prev) => [newProject, ...prev]);
+    }
+
+    closeProjectDialog();
+  };
+
+  const handleDeleteProject = (id: string) => {
+    const project = projects.find((p) => p.id === id);
+    const name = project?.name ?? 'this project';
+    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) {
+      return;
+    }
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  // ---------- Image upload ----------
+  const handleImageChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file || !projectForm) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setProjectForm((prev) =>
+        prev
+          ? {
+              ...prev,
+              imageUrl: dataUrl,
+            }
+          : prev,
+      );
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ---------- Derived / filtered list ----------
+  const filteredProjects = React.useMemo(() => {
+    const term = searchTerm.toLowerCase().trim();
+    return projects.filter((project) => {
+      const matchesSearch =
+        !term ||
+        project.name.toLowerCase().includes(term) ||
+        project.client.toLowerCase().includes(term) ||
+        (project.city ?? '').toLowerCase().includes(term) ||
+        (project.zipCode ?? '').toLowerCase().includes(term);
+
+      const matchesStatus =
+        statusFilter === 'all' ||
+        project.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
     });
   }, [projects, searchTerm, statusFilter]);
 
-  // ---------- UI ----------
+  // ---------- Card metric helpers ----------
+  const getTotalBudget = (project: Project) => {
+    const items = (project.budgetData ?? []) as any[];
+    return items.reduce(
+      (sum, item) => sum + (item.originalBudget ?? 0),
+      0,
+    );
+  };
+
+  const getTotalSpent = (project: Project) => {
+    const items = (project.expensesData ?? []) as any[];
+    return items.reduce(
+      (sum, item) => sum + (item.amount ?? 0),
+      0,
+    );
+  };
+
+  const getProfitLoss = (project: Project) => {
+    const finalBid =
+      project.finalBid ??
+      (project.budgetData ?? []).reduce(
+        (sum: number, item: any) =>
+          sum + (item.finalBidToCustomer ?? 0),
+        0,
+      );
+    const spent = getTotalSpent(project);
+    return finalBid - spent;
+  };
+
+  const getBudgetStatusPercent = (project: Project) => {
+    const budget = getTotalBudget(project);
+    const spent = getTotalSpent(project);
+    if (budget <= 0) return 0;
+    return Math.min(200, (spent / budget) * 100);
+  };
+
+  const getStatusBadgeColor = (status: Project['status']) => {
+    switch (status) {
+      case 'Active':
+        return 'bg-blue-100 text-blue-700';
+      case 'Planning':
+        return 'bg-amber-100 text-amber-700';
+      case 'Completed':
+        return 'bg-emerald-100 text-emerald-700';
+      case 'On Hold':
+      default:
+        return 'bg-slate-200 text-slate-700';
+    }
+  };
+
+  if (!isMounted) {
+    return (
+      <div className="p-8 text-sm text-muted-foreground">
+        Loading projects…
+      </div>
+    );
+  }
+
   return (
-    <AppShell>
-      <div className="space-y-6">
-        {/* Page header + actions */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg md:text-2xl font-semibold">Projects</h1>
-            <p className="text-sm text-slate-500">
-              Overview of all active and completed jobs.
+    <>
+      {/* Create / Edit Project dialog */}
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          if (!open) closeProjectDialog();
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {projectForm?.id
+                ? 'Edit Project'
+                : 'Create New Project'}
+            </DialogTitle>
+            <p className="text-xs text-muted-foreground">
+              Fill out the details below to create a new
+              construction project.
             </p>
-          </div>
+          </DialogHeader>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleSaveSnapshot}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-            >
-              Save Snapshot to Cloud
-            </button>
-            <button
-              type="button"
-              onClick={handleLoadLatestSnapshot}
-              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
-            >
-              Load Latest Snapshot
-            </button>
-          </div>
-        </div>
+          {projectForm && (
+            <div className="grid gap-4 py-2">
+              {/* Project Name */}
+              <div className="space-y-1">
+                <Label>Project Name</Label>
+                <Input
+                  placeholder="e.g., Riverfront Residences"
+                  value={projectForm.name}
+                  onChange={(e) =>
+                    setProjectForm((f) =>
+                      f
+                        ? { ...f, name: e.target.value }
+                        : f,
+                    )
+                  }
+                />
+              </div>
 
-        {/* Filters row */}
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-3 py-3">
-          {/* Search */}
-          <div className="flex-1 min-w-[220px]">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Search
-            </label>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-md border px-2 py-1.5 text-sm"
-              placeholder="Search by project name, client, city, or zip"
-            />
-          </div>
-
-          {/* Status filter */}
-          <div className="w-full sm:w-48">
-            <label className="block text-xs font-medium text-slate-600 mb-1">
-              Status
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as StatusFilter)
-              }
-              className="w-full rounded-md border px-2 py-1.5 text-sm bg-white"
-            >
-              <option value="all">All statuses</option>
-              <option value="Active">Active</option>
-              <option value="Planning">Planning</option>
-              <option value="Completed">Completed</option>
-              <option value="On Hold">On Hold</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Projects grid */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleProjects.length === 0 ? (
-            <div className="col-span-full rounded-lg border bg-white px-4 py-6 text-sm text-slate-500">
-              No projects found. Try adjusting your filters or add a new project.
-            </div>
-          ) : (
-            visibleProjects.map((project) => {
-              const finalBid = project.finalBid ?? project.budget;
-              const spent = project.spent;
-              const remaining = Math.max(finalBid - spent, 0);
-              const percentSpent =
-                finalBid > 0
-                  ? Math.min(Math.round((spent / finalBid) * 100), 999)
-                  : 0;
-              const profitLoss = finalBid - spent; // positive = under budget
-
-              const locationParts = [project.city, project.zipCode].filter(
-                Boolean
-              );
-              const location = locationParts.join(" ");
-
-              const statusColor =
-                project.status === "Active"
-                  ? "bg-green-100 text-green-700"
-                  : project.status === "Planning"
-                  ? "bg-amber-100 text-amber-700"
-                  : project.status === "Completed"
-                  ? "bg-slate-100 text-slate-700"
-                  : "bg-purple-100 text-purple-700"; // On Hold
-
-              return (
-                <article
-                  key={project.id}
-                  className="flex h-full flex-col overflow-hidden rounded-lg border bg-white"
-                >
-                  {/* Card header */}
-                  <div className="border-b bg-slate-50 px-4 py-3 flex items-center justify-between gap-2">
-                    <div className="space-y-0.5">
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Project
+              {/* Project Image */}
+              <div className="space-y-2">
+                <Label>Project Image</Label>
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex h-24 w-40 items-center justify-center rounded-md border border-dashed bg-muted/40 overflow-hidden">
+                    {projectForm.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={projectForm.imageUrl}
+                        alt={projectForm.name || 'Project image'}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-xs text-muted-foreground gap-1">
+                        <UploadCloud className="h-5 w-5" />
+                        <span>Upload image</span>
                       </div>
-                      <div className="text-sm font-semibold leading-tight">
-                        {project.name}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {location && <span>{location}</span>}
-                      </div>
-                    </div>
-
-                    <span
-                      className={
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium " +
-                        statusColor
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        fileInputRef.current?.click()
                       }
                     >
-                      {project.status}
-                    </span>
+                      Choose File
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      PNG or JPG, up to ~2MB.
+                    </p>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageChange}
+                    />
                   </div>
+                </div>
+              </div>
 
-                  {/* Card body */}
-                  <div className="flex-1 px-4 py-3 space-y-3">
-                    {/* Client */}
-                    <div className="text-xs text-slate-500">
-                      Client:{" "}
-                      <span className="font-medium text-slate-800">
-                        {project.client}
-                      </span>
-                    </div>
+              {/* Client */}
+              <div className="space-y-1">
+                <Label>Client</Label>
+                <Input
+                  placeholder="e.g., ABC Development Corp"
+                  value={projectForm.client}
+                  onChange={(e) =>
+                    setProjectForm((f) =>
+                      f
+                        ? { ...f, client: e.target.value }
+                        : f,
+                    )
+                  }
+                />
+              </div>
 
-                    {/* Budget summary */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs text-slate-500">
-                        <span>Budget</span>
-                        <span>
-                          ${finalBid.toLocaleString()}{" "}
-                          <span className="text-slate-400">Final Bid</span>
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-500">
-                        <span>Spent</span>
-                        <span>${spent.toLocaleString()}</span>
-                      </div>
+              {/* Street address */}
+              <div className="space-y-1">
+                <Label>Street Address</Label>
+                <Input
+                  placeholder="e.g., 123 Main St"
+                  value={projectForm.streetAddress}
+                  onChange={(e) =>
+                    setProjectForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            streetAddress: e.target.value,
+                          }
+                        : f,
+                    )
+                  }
+                />
+              </div>
 
-                      {/* Progress bar (budget used) */}
-                      <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100">
-                        <div
-                          className="h-1.5 rounded-full bg-sky-500"
-                          style={{
-                            width: `${Math.min(percentSpent, 100)}%`,
-                          }}
-                        />
-                      </div>
-                      <div className="flex justify-between items-center text-[11px] text-slate-500 mt-1">
-                        <span>{percentSpent}% of budget used</span>
-                        <span>
-                          Remaining: ${remaining.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
+              {/* City / Zip */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>City</Label>
+                  <Input
+                    placeholder="e.g., Metropolis"
+                    value={projectForm.city}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              city: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Zip Code</Label>
+                  <Input
+                    placeholder="e.g., 12345"
+                    value={projectForm.zipCode}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              zipCode: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+              </div>
 
-                    {/* Overall project progress */}
-                    <div className="space-y-1 pt-1 border-t border-dashed border-slate-200 mt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-slate-500">
-                          Overall Progress
-                        </span>
-                        <span className="text-xs font-medium text-slate-700">
-                          {project.progress}%
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full rounded-full bg-slate-100">
-                        <div
-                          className="h-1.5 rounded-full bg-emerald-500"
-                          style={{
-                            width: `${Math.min(project.progress, 100)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
+              {/* Description */}
+              <div className="space-y-1">
+                <Label>Description</Label>
+                <textarea
+                  className="w-full rounded-md border border-input px-3 py-2 text-sm"
+                  rows={3}
+                  placeholder="Project details and scope..."
+                  value={projectForm.description}
+                  onChange={(e) =>
+                    setProjectForm((f) =>
+                      f
+                        ? {
+                            ...f,
+                            description: e.target.value,
+                          }
+                        : f,
+                    )
+                  }
+                />
+              </div>
 
-                    {/* Profit / Loss */}
-                    <div className="flex items-center justify-between pt-1 border-t border-dashed border-slate-200 mt-2">
-                      <span className="text-xs text-slate-500">
-                        Profit / Loss
-                      </span>
-                      <span
-                        className={
-                          "text-xs font-semibold " +
-                          (profitLoss > 0
-                            ? "text-green-600"
-                            : profitLoss < 0
-                            ? "text-red-600"
-                            : "text-slate-700")
-                        }
-                      >
-                        {profitLoss >= 0 ? "+" : "-"}$
-                        {Math.abs(profitLoss).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
+              {/* Internal contract / final bid */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Internal Contract Amount</Label>
+                  <Input
+                    placeholder="0"
+                    value={projectForm.internalContractAmount}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              internalContractAmount:
+                                e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Final Bid to Customer</Label>
+                  <Input
+                    placeholder="0"
+                    value={projectForm.finalBid}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              finalBid: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+              </div>
 
-                  {/* Card footer */}
-                  <div className="border-t bg-slate-50 px-4 py-2 flex items-center justify-between">
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-sky-700 hover:underline"
-                    >
-                      View Details
-                    </button>
-                    <span className="text-[11px] text-slate-400">
-                      Start: {project.startDate} · End: {project.endDate}
-                    </span>
-                  </div>
-                </article>
-              );
-            })
+              {/* Status / progress */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Status</Label>
+                  <Select
+                    value={projectForm.status}
+                    onValueChange={(value) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              status:
+                                value as Project['status'],
+                            }
+                          : f,
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Planning" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Planning">
+                        Planning
+                      </SelectItem>
+                      <SelectItem value="Active">
+                        In Progress
+                      </SelectItem>
+                      <SelectItem value="Completed">
+                        Completed
+                      </SelectItem>
+                      <SelectItem value="On Hold">
+                        On Hold
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label>Progress (%)</Label>
+                  <Input
+                    placeholder="0"
+                    value={projectForm.progress}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              progress: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Start / end dates */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Start Date</Label>
+                  <Input
+                    type="date"
+                    value={projectForm.startDate}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              startDate: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>End Date</Label>
+                  <Input
+                    type="date"
+                    value={projectForm.endDate}
+                    onChange={(e) =>
+                      setProjectForm((f) =>
+                        f
+                          ? {
+                              ...f,
+                              endDate: e.target.value,
+                            }
+                          : f,
+                      )
+                    }
+                  />
+                </div>
+              </div>
+            </div>
           )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={closeProjectDialog}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleProjectFormSubmit}>
+              {projectForm?.id ? 'Save Project' : 'Create Project'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Page header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold font-headline tracking-tight">
+            Projects
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Manage all your construction projects from start to finish.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSaveSnapshot}
+            disabled={isSavingSnapshot}
+          >
+            <CloudUpload className="mr-2 h-4 w-4" />
+            {isSavingSnapshot
+              ? 'Saving…'
+              : 'Save Snapshot to Cloud'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLoadSnapshot}
+            disabled={isLoadingSnapshot}
+          >
+            <CloudDownload className="mr-2 h-4 w-4" />
+            {isLoadingSnapshot
+              ? 'Loading…'
+              : 'Load Latest Snapshot'}
+          </Button>
+          <Button onClick={openCreateProjectDialog}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Project
+          </Button>
         </div>
       </div>
-    </AppShell>
+
+      {/* Filters */}
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="w-full md:max-w-md">
+          <Input
+            placeholder="Search by project name, client, city, or zip"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            Status
+          </span>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) =>
+              setStatusFilter(value as StatusFilter)
+            }
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="Planning">Planning</SelectItem>
+              <SelectItem value="Active">In Progress</SelectItem>
+              <SelectItem value="Completed">Completed</SelectItem>
+              <SelectItem value="On Hold">On Hold</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {/* Cards */}
+      {filteredProjects.length === 0 ? (
+        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+          No projects found. Try adjusting your filters or add a new
+          project.
+        </div>
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-2">
+          {filteredProjects.map((project) => {
+            const totalBudget = getTotalBudget(project);
+            const spent = getTotalSpent(project);
+            const pl = getProfitLoss(project);
+            const budgetPct = getBudgetStatusPercent(project);
+
+            const maxVal = Math.max(
+              project.finalBid ?? 0,
+              totalBudget,
+              spent,
+              Math.abs(pl),
+              1,
+            );
+            const barHeight = (val: number) =>
+              `${(val / maxVal) * 80 || 2}%`;
+
+            return (
+              <Card
+                key={project.id}
+                className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() =>
+                  router.push(`/projects/${project.id}`)
+                }
+              >
+                {/* Image strip */}
+                <div className="h-40 w-full bg-slate-200 overflow-hidden">
+                  {project.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={project.imageUrl}
+                      alt={project.imageHint || project.name}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-sm text-slate-500">
+                      Project elevation / hero image
+                    </div>
+                  )}
+                </div>
+
+                <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3 pt-4">
+                  <div className="space-y-1">
+                    <h2 className="text-base font-semibold">
+                      {project.name}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      {project.description ||
+                        `${project.city ?? ''} ${
+                          project.zipCode ?? ''
+                        }`.trim()}
+                    </p>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <span
+                      className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getStatusBadgeColor(
+                        project.status,
+                      )}`}
+                    >
+                      {project.status === 'Active'
+                        ? 'In Progress'
+                        : project.status}
+                    </span>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <DropdownMenuItem
+                          onClick={() =>
+                            openEditProjectDialog(project)
+                          }
+                        >
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            router.push(
+                              `/projects/${project.id}`,
+                            )
+                          }
+                        >
+                          Open Project
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() =>
+                            handleDeleteProject(project.id)
+                          }
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="pb-5 pt-0">
+                  {/* Budget status */}
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="font-medium">
+                        Budget Status
+                      </span>
+                      <span className="text-muted-foreground">
+                        {budgetPct.toFixed(1)}% Used
+                      </span>
+                    </div>
+                    <Progress value={budgetPct} />
+                  </div>
+
+                  {/* Money stats + tiny bars */}
+                  <div className="grid gap-4 md:grid-cols-[2fr,1fr] items-end">
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs">
+                      <div>
+                        <div className="text-muted-foreground">
+                          Final Bid
+                        </div>
+                        <div className="font-semibold">
+                          $
+                          {formatMoney(
+                            project.finalBid ?? 0,
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">
+                          Total Budget (cost)
+                        </div>
+                        <div className="font-semibold">
+                          ${formatMoney(totalBudget)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">
+                          Spent to Date
+                        </div>
+                        <div className="font-semibold">
+                          ${formatMoney(spent)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">
+                          Remaining Budget
+                        </div>
+                        <div className="font-semibold">
+                          $
+                          {formatMoney(
+                            Math.max(totalBudget - spent, 0),
+                          )}
+                        </div>
+                      </div>
+                      <div className="md:col-span-2">
+                        <div className="text-muted-foreground">
+                          Profit / Loss
+                        </div>
+                        <div
+                          className={`font-semibold ${
+                            pl >= 0
+                              ? 'text-emerald-600'
+                              : 'text-destructive'
+                          }`}
+                        >
+                          ${formatMoney(pl)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Mini bar chart */}
+                    <div className="flex h-24 items-end justify-between gap-3">
+                      <div className="flex-1 flex flex-col items-center gap-1">
+                        <div
+                          className="w-4 rounded-t bg-emerald-500"
+                          style={{
+                            height: barHeight(
+                              project.finalBid ?? 0,
+                            ),
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          Final Bid
+                        </span>
+                      </div>
+                      <div className="flex-1 flex flex-col items-center gap-1">
+                        <div
+                          className="w-4 rounded-t bg-blue-500"
+                          style={{
+                            height: barHeight(totalBudget),
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          Budget
+                        </span>
+                      </div>
+                      <div className="flex-1 flex flex-col items-center gap-1">
+                        <div
+                          className="w-4 rounded-t bg-amber-500"
+                          style={{
+                            height: barHeight(spent),
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          Spent
+                        </span>
+                      </div>
+                      <div className="flex-1 flex flex-col items-center gap-1">
+                        <div
+                          className={`w-4 rounded-t ${
+                            pl >= 0
+                              ? 'bg-emerald-500'
+                              : 'bg-red-500'
+                          }`}
+                          style={{
+                            height: barHeight(Math.abs(pl)),
+                          }}
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          Profit/Loss
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Timeline */}
+                  <div className="mt-4 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <div>
+                      <span className="font-medium text-foreground">
+                        Timeline:{' '}
+                      </span>
+                      {project.startDate && project.endDate
+                        ? `${project.startDate} → ${project.endDate}`
+                        : 'Dates not set'}
+                    </div>
+                    <Link
+                      href={`/projects/${project.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Open Project
+                    </Link>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

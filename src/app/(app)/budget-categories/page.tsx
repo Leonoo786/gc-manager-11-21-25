@@ -1,396 +1,406 @@
-"use client";
+'use client';
 
-import * as React from "react";
+import * as React from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+
 
 type BudgetCategory = {
-  id: number;
-  category: string;
+  id: string;
+  name: string;
   costType: string;
 };
 
-const STORAGE_KEY = "budgetCategories";
+const STORAGE_KEY = 'budgetCategories';
 
-const defaultCategories: Omit<BudgetCategory, "id">[] = [
-  { category: "Sitework Labor", costType: "Sitework" },
-  { category: "Sitework Material", costType: "Sitework" },
-  { category: "Dirtwork Labor", costType: "Dirtwork" },
-  { category: "Pollution Control Labor", costType: "Pollution" },
-  { category: "Pollution Control Material", costType: "Pollution" },
-  { category: "SWPP", costType: "SWPP" },
-  { category: "Steel Labor", costType: "Steel" },
-  { category: "Steel Material", costType: "Steel" },
-  { category: "Haul Off", costType: "Haul" },
-  { category: "Foundation Labor", costType: "Foundation" },
-  { category: "Foundation Material", costType: "Foundation" },
-  { category: "Parking Lot Labor", costType: "Parking" },
-  { category: "Parking Lot Material", costType: "Parking" },
-  { category: "SideWalk Labor", costType: "SideWalk" },
-  { category: "SideWalk Material", costType: "SideWalk" },
-  { category: "Curbs Labor", costType: "Curbs" },
-  { category: "Curbs Material", costType: "Curbs" },
-  { category: "Bollards/Car-stoppers", costType: "Bollards" },
-  { category: "Electrical", costType: "Electrical" },
-  { category: "Plumbing", costType: "Plumbing" },
-  { category: "HVAC", costType: "HVAC" },
-  { category: "Framing Labor", costType: "Framing" },
-  { category: "Framing Material", costType: "Framing" },
-  { category: "Doors/Hardware Labor", costType: "Doors" },
-  { category: "Doors/Hardware Material", costType: "Doors" },
+// 🔹 FULL list from your spreadsheet
+const DEFAULT_CATEGORIES: BudgetCategory[] = [
+  { id: 'bc-sitework-labor', name: 'Sitework Labor', costType: 'Sitework' },
+  { id: 'bc-sitework-material', name: 'Sitework Material', costType: 'Sitework' },
+
+  { id: 'bc-dirtwork-labor', name: 'Dirtwork Labor', costType: 'Dirtwork' },
+
+  { id: 'bc-pollution-labor', name: 'Pollution Control Labor', costType: 'Pollution' },
+  { id: 'bc-pollution-material', name: 'Pollution Control Material', costType: 'Pollution' },
+
+  { id: 'bc-swpp', name: 'SWPP', costType: 'SWPP' },
+
+  { id: 'bc-steel-labor', name: 'Steel Labor', costType: 'Steel' },
+  { id: 'bc-steel-material', name: 'Steel Material', costType: 'Steel' },
+
+  { id: 'bc-haul-off', name: 'Haul Off', costType: 'Haul' },
+
+  { id: 'bc-foundation-labor', name: 'Foundation Labor', costType: 'Foundation' },
+  { id: 'bc-foundation-material', name: 'Foundation Material', costType: 'Foundation' },
+
+  { id: 'bc-parking-labor', name: 'Parking Lot Labor', costType: 'Parking' },
+  { id: 'bc-parking-material', name: 'Parking Lot Material', costType: 'Parking' },
+
+  { id: 'bc-sidewalk-labor', name: 'SideWalk Labor', costType: 'SideWalk' },
+  { id: 'bc-sidewalk-material', name: 'SideWalk Material', costType: 'SideWalk' },
+
+  { id: 'bc-curbs-labor', name: 'Curbs Labor', costType: 'Curbs' },
+  { id: 'bc-curbs-material', name: 'Curbs Material', costType: 'Curbs' },
+
+  { id: 'bc-bollards', name: 'Bollards/Car-stoppers', costType: 'Bollards' },
+
+  { id: 'bc-electrical', name: 'Electrical', costType: 'Electrical' },
+  { id: 'bc-plumbing', name: 'Plumbing', costType: 'Plumbing' },
+  { id: 'bc-hvac', name: 'HVAC', costType: 'HVAC' },
+
+  { id: 'bc-framing-labor', name: 'Framing Labor', costType: 'Framing' },
+  { id: 'bc-framing-material', name: 'Framing Material', costType: 'Framing' },
+
+  { id: 'bc-doors-labor', name: 'Doors/Hardware Labor', costType: 'Doors' },
+  { id: 'bc-doors-material', name: 'Doors/Hardware Material', costType: 'Doors' },
+
   {
-    category: "Roof/Coping/Downspots/CollectorBox",
-    costType: "Roof",
+    id: 'bc-roof',
+    name: 'Roof/Coping/Downspots/CollectorBox',
+    costType: 'Roof',
   },
-  { category: "Store front Canopy Labor", costType: "Store" },
-  { category: "Store front Canopy Material", costType: "Store" },
-  { category: "Stucco/Bricks/Burnished Blocks", costType: "Stucco" },
-  { category: "Store front GLASS", costType: "Store" },
-  { category: "Floor / Tiles Labor", costType: "Floor" },
-  { category: "Floor / Tiles Material", costType: "Floor" },
-  { category: "Paint Labor", costType: "Paint" },
-  { category: "Paint Material", costType: "Paint" },
-  { category: "Millwork", costType: "Millwork" },
-  { category: "VentHood", costType: "VentHood" },
-  { category: "Ansul System", costType: "Ansul" },
-  { category: "RENTALS", costType: "RENTALS" },
-  { category: "Landscape Labor", costType: "Landscape" },
-  { category: "Landscape Material", costType: "Landscape" },
-  { category: "Survey", costType: "Survey" },
-  { category: "Cleanup", costType: "Cleanup" },
-  { category: "Stripes Labor", costType: "Stripes" },
-  { category: "Stripes Material", costType: "Stripes" },
-  { category: "Misc.", costType: "Misc" },
-  { category: "Builder's Risk", costType: "Builder's" },
+
+  { id: 'bc-store-canopy-labor', name: 'Store front Canopy Labor', costType: 'Store' },
   {
-    category: "Administrative/Superintendent Cost",
-    costType: "Administrative",
+    id: 'bc-store-canopy-material',
+    name: 'Store front Canopy Material',
+    costType: 'Store',
+  },
+
+  { id: 'bc-stucco', name: 'Stucco/Bricks/Burnished Blocks', costType: 'Stucco' },
+
+  { id: 'bc-store-glass', name: 'Store front GLASS', costType: 'Store' },
+
+  { id: 'bc-floor-labor', name: 'Floor / Tiles Labor', costType: 'Floor' },
+  { id: 'bc-floor-material', name: 'Floor / Tiles Material', costType: 'Floor' },
+
+  { id: 'bc-paint-labor', name: 'Paint Labor', costType: 'Paint' },
+  { id: 'bc-paint-material', name: 'Paint Material', costType: 'Paint' },
+
+  { id: 'bc-millwork', name: 'Millwork', costType: 'Millwork' },
+
+  { id: 'bc-venthood', name: 'VentHood', costType: 'VentHood' },
+  { id: 'bc-ansul', name: 'Ansul System', costType: 'Ansul' },
+
+  { id: 'bc-rentals', name: 'RENTALS', costType: 'RENTALS' },
+
+  { id: 'bc-landscape-labor', name: 'Landscape Labor', costType: 'Landscape' },
+  {
+    id: 'bc-landscape-material',
+    name: 'Landscape Material',
+    costType: 'Landscape',
+  },
+
+  { id: 'bc-survey', name: 'Survey', costType: 'Survey' },
+
+  { id: 'bc-cleanup', name: 'Cleanup', costType: 'Cleanup' },
+
+  { id: 'bc-stripes-labor', name: 'Stripes Labor', costType: 'Stripes' },
+  { id: 'bc-stripes-material', name: 'Stripes Material', costType: 'Stripes' },
+
+  { id: 'bc-misc', name: 'Misc.', costType: 'Misc' },
+
+  { id: 'bc-builders-risk', name: "Builder's Risk", costType: "Builder's" },
+
+  {
+    id: 'bc-admin-superintendent',
+    name: 'Administrative/Superintendent Cost',
+    costType: 'Administrative',
   },
 ];
 
+// Safely normalize whatever is in localStorage
+function normalizeCategories(raw: any): BudgetCategory[] {
+  if (!Array.isArray(raw)) return DEFAULT_CATEGORIES;
+
+  return raw
+    .map((item, index) => {
+      if (!item) return null;
+      const name = (item.name ?? item.category ?? '').toString().trim();
+      const costType = (item.costType ?? '').toString().trim();
+      if (!name && !costType) return null;
+
+      return {
+        id:
+          (item.id as string) ||
+          `bc-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        costType,
+      };
+    })
+    .filter((v): v is BudgetCategory => v !== null);
+}
+
 export default function BudgetCategoriesPage() {
-  const [categories, setCategories] = React.useState<BudgetCategory[]>([]);
-  const [isLoaded, setIsLoaded] = React.useState(false);
-
-  // Add form state
-  const [newCategory, setNewCategory] = React.useState("");
-  const [newCostType, setNewCostType] = React.useState("");
-
-  // Edit state
-  const [editingId, setEditingId] = React.useState<number | null>(null);
-  const [editCategory, setEditCategory] = React.useState("");
-  const [editCostType, setEditCostType] = React.useState("");
-
-  // ---------- INITIAL LOAD (localStorage + default) ----------
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-
+  const [categories, setCategories] = React.useState<BudgetCategory[]>(() => {
+    if (typeof window === 'undefined') return DEFAULT_CATEGORIES;
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as BudgetCategory[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setCategories(parsed);
-          setIsLoaded(true);
-          return;
-        }
-      }
-    } catch (err) {
-      console.error("Failed to read budget categories from localStorage:", err);
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (!saved) return DEFAULT_CATEGORIES;
+      const parsed = JSON.parse(saved);
+      return normalizeCategories(parsed);
+    } catch {
+      return DEFAULT_CATEGORIES;
     }
+  });
 
-    // Fallback to defaults with IDs
-    const withIds: BudgetCategory[] = defaultCategories.map((item, index) => ({
-      id: index + 1,
-      ...item,
-    }));
-    setCategories(withIds);
-    setIsLoaded(true);
-  }, []);
+  const [newName, setNewName] = React.useState('');
+  const [newCostType, setNewCostType] = React.useState('');
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [editName, setEditName] = React.useState('');
+  const [editCostType, setEditCostType] = React.useState('');
 
-  // ---------- SAVE TO LOCALSTORAGE ----------
+  // Save to localStorage whenever categories change
   React.useEffect(() => {
-    if (!isLoaded || typeof window === "undefined") return;
-
+    if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(categories));
     } catch (err) {
-      console.error("Failed to save budget categories:", err);
+      console.error('Failed to save budget categories:', err);
     }
-  }, [categories, isLoaded]);
+  }, [categories]);
 
-  // ---------- HELPERS ----------
-  const nextId = React.useCallback(
-    () => (categories.length ? Math.max(...categories.map((c) => c.id)) + 1 : 1),
-    [categories]
-  );
+  const handleAdd = () => {
+  const name = newName.trim();
+  const costType = newCostType.trim();
 
-  // ---------- ADD ----------
-  const handleAddCategory = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cat = newCategory.trim();
-    const cost = newCostType.trim();
-    if (!cat || !cost) {
-      alert("Please enter both Category and Cost Type.");
-      return;
-    }
+  // Don’t add completely empty rows
+  if (!name && !costType) return;
 
-    setCategories((prev) => [
-      ...prev,
-      { id: nextId(), category: cat, costType: cost },
-    ]);
+  const id =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `bc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    setNewCategory("");
-    setNewCostType("");
+  // Add new category at the end
+  setCategories((prev) => [...prev, { id, name, costType }]);
+
+  // Clear inputs
+  setNewName('');
+  setNewCostType('');
+};
+
+
+  const handleDelete = (id: string) => {
+    setCategories((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // ---------- EDIT ----------
-  const startEdit = (row: BudgetCategory) => {
-    setEditingId(row.id);
-    setEditCategory(row.category);
-    setEditCostType(row.costType);
+  const startEdit = (cat: BudgetCategory) => {
+    setEditingId(cat.id);
+    setEditName(cat.name);
+    setEditCostType(cat.costType);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setEditCategory("");
-    setEditCostType("");
+    setEditName('');
+    setEditCostType('');
   };
 
-  const saveEdit = (id: number) => {
-    const cat = editCategory.trim();
-    const cost = editCostType.trim();
-    if (!cat || !cost) {
-      alert("Please enter both Category and Cost Type.");
-      return;
-    }
-
+  const saveEdit = () => {
+    if (!editingId) return;
+    const name = editName.trim();
+    const costType = editCostType.trim();
     setCategories((prev) =>
-      prev.map((row) =>
-        row.id === id ? { ...row, category: cat, costType: cost } : row
-      )
+      prev.map((c) =>
+        c.id === editingId ? { ...c, name, costType } : c,
+      ),
     );
     cancelEdit();
   };
 
-  // ---------- DELETE ----------
-  const deleteCategory = (id: number) => {
-    const ok = window.confirm("Delete this budget category?");
-    if (!ok) return;
-
-    setCategories((prev) => prev.filter((row) => row.id !== id));
-  };
-
-    // ---------- IMPORT DEFAULT CATEGORIES ----------
+  // Merge defaults with existing (no duplicates)
   const handleImportDefaults = () => {
     setCategories((prev) => {
-      // Build a set of existing category + costType combos (case-insensitive)
-      const existingKeys = new Set(
-        prev.map((c) =>
-          `${c.category.trim().toLowerCase()}|${c.costType
-            .trim()
-            .toLowerCase()}`
-        )
+      const existing = new Set(
+        prev.map((c) => `${c.name}__${c.costType}`.toLowerCase()),
       );
-
-      // Find current max id so we can keep ids unique
-      let currentMaxId = prev.length
-        ? Math.max(...prev.map((c) => c.id))
-        : 0;
-
-      const toAdd: BudgetCategory[] = [];
-
-      for (const item of defaultCategories) {
-        const key = `${item.category.trim().toLowerCase()}|${item.costType
-          .trim()
-          .toLowerCase()}`;
-        if (!existingKeys.has(key)) {
-          currentMaxId += 1;
-          toAdd.push({
-            id: currentMaxId,
-            category: item.category,
-            costType: item.costType,
-          });
-        }
-      }
-
-      if (toAdd.length === 0) {
-        alert("All default budget categories are already imported.");
-        return prev;
-      }
-
-      alert(`Imported ${toAdd.length} default budget categor${toAdd.length === 1 ? "y" : "ies"}.`);
-      return [...prev, ...toAdd];
+      return [
+        ...prev,
+        ...DEFAULT_CATEGORIES.filter(
+          (c) =>
+            !existing.has(
+              `${c.name}__${c.costType}`.toLowerCase(),
+            ),
+        ),
+      ];
     });
   };
 
+  // Replace everything with your master list
+  const handleReplaceWithMasterList = () => {
+    setCategories(DEFAULT_CATEGORIES);
+  };
 
-  // ---------- JSX ----------
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg md:text-2xl font-semibold">
-            Budget Categories
-          </h1>
-          <p className="text-sm text-slate-500">
-            Standard categories and cost types used across your projects.
-          </p>
-        </div>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Budget Categories</h1>
+        <p className="text-sm text-slate-500">
+          Standard categories and cost types used across your projects.
+        </p>
       </div>
 
-      {/* Add form */}
-      <form
-        onSubmit={handleAddCategory}
-        className="flex flex-wrap items-end gap-3 rounded-lg border bg-white px-3 py-3"
-      >
-        <div className="flex-1 min-w-[220px]">
-          <label className="block text-xs font-medium text-slate-600 mb-1">
-            Category
-          </label>
-          <input
-            type="text"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            className="w-full rounded-md border px-2 py-1.5 text-sm"
-            placeholder="e.g. New Category"
-          />
-        </div>
+      {/* Add Category row */}
+      <div className="rounded-md border bg-white px-4 py-3">
+        <div className="grid gap-3 md:grid-cols-[2fr,2fr,auto] items-center">
+          <div>
+            <label className="text-xs font-medium text-slate-600">
+              Category
+            </label>
+            <Input
+              placeholder="e.g. Sitework Labor"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600">
+              Cost Type
+            </label>
+            <Input
+              placeholder="e.g. Sitework"
+              value={newCostType}
+              onChange={(e) => setNewCostType(e.target.value)}
+              className="mt-1"
+            />
+          </div>
+          <div className="flex gap-2 mt-4 md:mt-6 justify-end">
+  <Button
+    type="button"
+    variant="outline"
+    onClick={handleImportDefaults}
+  >
+    Merge Defaults
+  </Button>
 
-        <div className="w-full sm:w-52">
-          <label className="block text-xs font-medium text-slate-600 mb-1">
-            Cost Type
-          </label>
-          <input
-            type="text"
-            value={newCostType}
-            onChange={(e) => setNewCostType(e.target.value)}
-            className="w-full rounded-md border px-2 py-1.5 text-sm"
-            placeholder="e.g. Sitework"
-          />
-        </div>
+  <Button
+    type="button"
+    variant="outline"
+    onClick={handleReplaceWithMasterList}
+  >
+    Import Category / Cost Type List
+  </Button>
 
-          <button
-    type="submit"
-    className="inline-flex items-center rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
+  <Button
+    type="button"
+    onClick={handleAdd}   // ⬅️ make sure there is NO () here
   >
     + Add Category
-  </button>
+  </Button>
+</div>
 
-  <button
-    type="button"
-    onClick={handleImportDefaults}
-    className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-  >
-    Import Defaults
-  </button>
-</form>
-
-
-      {/* Table */}
-      <div className="rounded-lg border bg-white">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr className="border-b">
-                <th className="px-3 py-2 text-left font-medium text-slate-600 w-2/3">
-                  Category
-                </th>
-                <th className="px-3 py-2 text-left font-medium text-slate-600">
-                  Cost Type
-                </th>
-                <th className="px-3 py-2 text-right font-medium text-slate-600">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {categories.map((row) => {
-                const isEditing = row.id === editingId;
-                return (
-                  <tr key={row.id} className="border-t align-top">
-                    {/* Category */}
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={editCategory}
-                          onChange={(e) => setEditCategory(e.target.value)}
-                          className="w-full rounded-md border px-2 py-1 text-sm"
-                        />
-                      ) : (
-                        row.category
-                      )}
-                    </td>
-
-                    {/* Cost Type */}
-                    <td className="px-3 py-2">
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={editCostType}
-                          onChange={(e) => setEditCostType(e.target.value)}
-                          className="w-full rounded-md border px-2 py-1 text-sm"
-                        />
-                      ) : (
-                        <span className="text-slate-600">{row.costType}</span>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
-                      {isEditing ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => saveEdit(row.id)}
-                            className="rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={cancelEdit}
-                            className="rounded-md border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => startEdit(row)}
-                            className="rounded-md border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteCategory(row.id)}
-                            className="rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {categories.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={3}
-                    className="px-3 py-4 text-sm text-slate-500 text-center"
-                  >
-                    No budget categories defined yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
+    </div>
+
+      {/* Categories table */}
+      <div className="rounded-md border bg-white">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Category</TableHead>
+              <TableHead>Cost Type</TableHead>
+              <TableHead className="w-[80px] text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {categories.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={3}
+                  className="text-center py-6 text-sm text-slate-500"
+                >
+                  No budget categories yet. Add a new one above or import
+                  defaults.
+                </TableCell>
+              </TableRow>
+            ) : (
+              categories.map((cat) => (
+                <TableRow key={cat.id}>
+                  {editingId === cat.id ? (
+                    <>
+                      <TableCell>
+                        <Input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="text-sm"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={editCostType}
+                          onChange={(e) =>
+                            setEditCostType(e.target.value)
+                          }
+                          className="text-sm"
+                        />
+                      </TableCell>
+                      <TableCell className="text-right space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={cancelEdit}
+                        >
+                          Cancel
+                        </Button>
+                        <Button size="sm" onClick={saveEdit}>
+                          Save
+                        </Button>
+                      </TableCell>
+                    </>
+                  ) : (
+                    <>
+                      <TableCell>{cat.name}</TableCell>
+                      <TableCell>{cat.costType}</TableCell>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="px-2"
+                            >
+                              ⋯
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => startEdit(cat)}
+                            >
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleDelete(cat.id)}
+                              className="text-red-600 focus:text-red-600"
+                            >
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </>
+                  )}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

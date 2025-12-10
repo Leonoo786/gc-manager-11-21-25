@@ -190,8 +190,8 @@ export default function ProjectDetailsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header – now responsive */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-4">
           <Link href="/projects" passHref>
             <Button variant="outline" size="icon">
@@ -207,6 +207,7 @@ export default function ProjectDetailsPage() {
             </p>
           </div>
         </div>
+        {/* you can add right-side header actions here later if needed */}
       </div>
 
       {/* Timeline / cards */}
@@ -220,21 +221,23 @@ export default function ProjectDetailsPage() {
         />
       </div>
 
-      {/* Tabs */}
+      {/* Tabs – TabsList made horizontally scrollable on mobile */}
       <Tabs defaultValue="report">
-        <TabsList className="mb-4">
-          <TabsTrigger value="report">Report</TabsTrigger>
-          <TabsTrigger value="budget">Budget</TabsTrigger>
-          <TabsTrigger value="expenses">Expenses</TabsTrigger>
-          <TabsTrigger value="change-orders">Change Orders</TabsTrigger>
-          <TabsTrigger value="get-reimbursed">Get Reimbursed</TabsTrigger>
-          <TabsTrigger value="milestones">Milestones</TabsTrigger>
-          <TabsTrigger value="applications">Applications</TabsTrigger>
-          <TabsTrigger value="drawings">Drawings</TabsTrigger>
-          <TabsTrigger value="schedule">Schedule</TabsTrigger>
-          <TabsTrigger value="rfis">RFIs</TabsTrigger>
-          <TabsTrigger value="client-uploads">Client Uploads</TabsTrigger>
-        </TabsList>
+        <div className="mb-4 overflow-x-auto">
+          <TabsList className="mb-4 flex-wrap justify-start">
+            <TabsTrigger value="report">Report</TabsTrigger>
+            <TabsTrigger value="budget">Budget</TabsTrigger>
+            <TabsTrigger value="expenses">Expenses</TabsTrigger>
+            <TabsTrigger value="change-orders">Change Orders</TabsTrigger>
+            <TabsTrigger value="get-reimbursed">Get Reimbursed</TabsTrigger>
+            <TabsTrigger value="milestones">Milestones</TabsTrigger>
+            <TabsTrigger value="applications">Applications</TabsTrigger>
+            <TabsTrigger value="drawings">Drawings</TabsTrigger>
+            <TabsTrigger value="schedule">Schedule</TabsTrigger>
+            <TabsTrigger value="rfis">RFIs</TabsTrigger>
+            <TabsTrigger value="client-uploads">Client Uploads</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="report">
           <SpendingCategoriesTable
