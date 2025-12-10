@@ -1,21 +1,31 @@
-import { createClient } from "@supabase/supabase-js";
+// src/lib/supabase-server.ts
+import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error(
-    "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables"
+    'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars. Set them in .env.local and on Vercel.',
   );
 }
 
-// Server-side Supabase client (for API routes only)
-export const supabaseServerClient = createClient(
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  {
-    auth: {
-      persistSession: false,
-    },
+let supabaseAdminSingleton: ReturnType<typeof createClient> | null = null;
+
+export function getSupabaseAdmin() {
+  if (!supabaseAdminSingleton) {
+    supabaseAdminSingleton = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      },
+    );
+    // Optional debug
+    // console.log('[supabase-server] admin client created');
   }
-);
+  return supabaseAdminSingleton;
+}

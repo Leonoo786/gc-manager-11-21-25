@@ -1,110 +1,135 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Plus, CloudUpload, CloudDownload } from 'lucide-react';
+
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
-  MoreHorizontal,
-  Plus,
-  CloudUpload,
-  CloudDownload,
-  UploadCloud,
-} from 'lucide-react';
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+} from '@/components/ui/card';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 
 import {
   projectsData as templateProjects,
   type Project,
 } from './projects-data';
 
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-} from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-
 const STORAGE_KEY = 'projects';
 
-type StatusFilter = 'all' | Project['status'];
+// --- Mini-chart helpers ------------------------------------------------------
 
-type ProjectFormState = {
-  id?: string; // present in edit mode
+const computeFinancials = (project: Project) => {
+  const finalBid = project.finalBid ?? 0;
+
+  const totalBudget = (project.budgetData ?? []).reduce(
+    (sum: number, item: any) => sum + (item.originalBudget ?? 0),
+    0,
+  );
+
+  const spent = (project.expensesData ?? []).reduce(
+    (sum: number, exp: any) => sum + (exp.amount ?? 0),
+    0,
+  );
+
+  const profitLoss = finalBid - spent;
+
+  const max = Math.max(
+    finalBid,
+    totalBudget,
+    spent,
+    Math.abs(profitLoss),
+    1, // avoid divide-by-zero
+  );
+
+  const pct = (v: number) => (max ? (v / max) * 100 : 0);
+
+  return {
+    finalBid,
+    totalBudget,
+    spent,
+    profitLoss,
+    bars: {
+      finalBid: pct(finalBid),
+      totalBudget: pct(totalBudget),
+      spent: pct(spent),
+      profitLoss: pct(Math.abs(profitLoss)),
+    },
+  };
+};
+
+// --- New Project form state shape --------------------------------------------
+
+type NewProjectForm = {
   name: string;
   client: string;
   streetAddress: string;
   city: string;
   zipCode: string;
   description: string;
-  internalContractAmount: string; // kept in form only
-  finalBid: string;
+  internalContractAmount: string;
+  finalBidToCustomer: string;
   status: Project['status'];
   progress: string;
   startDate: string;
   endDate: string;
-  imageUrl: string; // data URL or external URL
+  imageUrl: string;
 };
 
-function formatMoney(value: number) {
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function parseMoneyInput(raw: string): number {
-  if (!raw) return 0;
-  const cleaned = raw.replace(/[\$,]/g, '');
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
-}
+const emptyForm: NewProjectForm = {
+  name: '',
+  client: '',
+  streetAddress: '',
+  city: '',
+  zipCode: '',
+  description: '',
+  internalContractAmount: '0',
+  finalBidToCustomer: '0',
+  status: 'Planning',
+  progress: '0',
+  startDate: '',
+  endDate: '',
+  imageUrl: '',
+};
 
 export default function ProjectsPage() {
   const router = useRouter();
 
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [isMounted, setIsMounted] = React.useState(false);
-
   const [searchTerm, setSearchTerm] = React.useState('');
   const [statusFilter, setStatusFilter] =
-    React.useState<StatusFilter>('all');
+    React.useState<Project['status'] | 'all'>('all');
 
-  const [isSavingSnapshot, setIsSavingSnapshot] =
-    React.useState(false);
-  const [isLoadingSnapshot, setIsLoadingSnapshot] =
-    React.useState(false);
+  const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [editingProjectId, setEditingProjectId] =
+    React.useState<string | null>(null);
+  const [form, setForm] = React.useState<NewProjectForm>(emptyForm);
 
-  // unified “Create / Edit Project” dialog
-  const [projectForm, setProjectForm] =
-    React.useState<ProjectFormState | null>(null);
-  const fileInputRef =
-    React.useRef<HTMLInputElement | null>(null);
+  // -------- Load initial projects from localStorage or template --------------
 
-  const dialogOpen = projectForm !== null;
-
-  // ---------- Initial load ----------
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -116,32 +141,30 @@ export default function ProjectsPage() {
         setProjects(templateProjects as Project[]);
       }
     } catch (err) {
-      console.error('Failed to read projects from localStorage:', err);
+      console.error('Failed to load projects from localStorage', err);
       setProjects(templateProjects as Project[]);
-    } finally {
-      setIsMounted(true);
     }
+
+    setIsMounted(true);
   }, []);
 
-  // ---------- Persist to localStorage ----------
+  // -------- Persist projects to localStorage ---------------------------------
+
   React.useEffect(() => {
     if (!isMounted) return;
     try {
       if (typeof window !== 'undefined') {
-        window.localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify(projects),
-        );
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
       }
     } catch (err) {
-      console.error('Failed to save projects to localStorage:', err);
+      console.error('Failed to save projects to localStorage', err);
     }
   }, [projects, isMounted]);
 
-  // ---------- Snapshot: save to Supabase ----------
+  // -------- Snapshot to Supabase ---------------------------------------------
+
   const handleSaveSnapshot = async () => {
     try {
-      setIsSavingSnapshot(true);
       const res = await fetch('/api/snapshot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,274 +172,199 @@ export default function ProjectsPage() {
       });
 
       if (!res.ok) {
-        console.error(await res.text());
-        alert('Failed to save snapshot to cloud.');
-        return;
+        throw new Error(`Status ${res.status}`);
       }
 
       alert('Snapshot saved to cloud.');
     } catch (err) {
-      console.error(err);
-      alert('Error while saving snapshot.');
-    } finally {
-      setIsSavingSnapshot(false);
+      console.error('Save snapshot failed', err);
+      alert('Failed to save snapshot. Please try again later.');
     }
   };
 
-  // ---------- Snapshot: load from Supabase ----------
   const handleLoadSnapshot = async () => {
     try {
-      setIsLoadingSnapshot(true);
       const res = await fetch('/api/snapshot', {
         method: 'GET',
       });
 
       if (!res.ok) {
-        console.error(await res.text());
+        if (res.status === 404) {
+          alert(
+            'No valid snapshot found in the cloud. Keeping your current projects',
+          );
+          return;
+        }
+        throw new Error(`Status ${res.status}`);
+      }
+
+      const data = (await res.json()) as { projects?: Project[] };
+      if (!data.projects || data.projects.length === 0) {
         alert(
-          'No valid snapshot found in the cloud. Keeping your current projects.',
+          'No valid snapshot found in the cloud. Keeping your current projects',
         );
         return;
       }
 
-      const data = await res.json();
-
-      if (Array.isArray(data.projects) && data.projects.length > 0) {
-        setProjects(data.projects as Project[]);
-        alert(
-          `Loaded snapshot with ${data.projects.length} projects from the cloud.`,
-        );
-      } else {
-        alert(
-          'No projects found in the latest snapshot. Keeping your current projects.',
-        );
-      }
+      setProjects(data.projects);
+      alert(`Loaded snapshot with ${data.projects.length} projects.`);
     } catch (err) {
-      console.error(err);
-      alert('Error while loading snapshot.');
-    } finally {
-      setIsLoadingSnapshot(false);
+      console.error('Load snapshot failed', err);
+      alert('Failed to load snapshot. Please try again later.');
     }
   };
 
-  // ---------- Open dialog: create ----------
-  const openCreateProjectDialog = () => {
-    setProjectForm({
-      id: undefined,
-      name: '',
-      client: '',
-      streetAddress: '',
-      city: '',
-      zipCode: '',
-      description: '',
-      internalContractAmount: '',
-      finalBid: '',
-      status: 'Planning',
-      progress: '0',
-      startDate: '',
-      endDate: '',
-      imageUrl: '',
+  // -------- Filtered list for rendering --------------------------------------
+
+  const filteredProjects = React.useMemo(() => {
+    return projects.filter((project) => {
+      const matchesSearch =
+        !searchTerm ||
+        project.name
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+        (project.client ?? '')
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+        (project.city ?? '')
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+        (project.zipCode ?? '')
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase());
+
+      const matchesStatus =
+        statusFilter === 'all' || project.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
     });
+  }, [projects, searchTerm, statusFilter]);
+
+  // -------- New / Edit Project dialog helpers --------------------------------
+
+  const openNewProjectDialog = () => {
+    setEditingProjectId(null);
+    setForm(emptyForm);
+    setIsDialogOpen(true);
   };
 
-  // ---------- Open dialog: edit ----------
-  const openEditProjectDialog = (project: Project) => {
-    setProjectForm({
-      id: project.id,
-      name: project.name ?? '',
+  const openEditDialog = (project: Project) => {
+    setEditingProjectId(project.id);
+    setForm({
+      name: project.name,
       client: project.client ?? '',
       streetAddress: project.streetAddress ?? '',
       city: project.city ?? '',
       zipCode: project.zipCode ?? '',
       description: project.description ?? '',
-      internalContractAmount: '', // we don't currently persist this
-      finalBid:
-        project.finalBid != null
-          ? String(project.finalBid)
-          : '',
+      internalContractAmount: String(project.budget ?? 0),
+      finalBidToCustomer: String(project.finalBid ?? 0),
       status: project.status,
       progress: String(project.progress ?? 0),
       startDate: project.startDate ?? '',
       endDate: project.endDate ?? '',
       imageUrl: project.imageUrl ?? '',
     });
+    setIsDialogOpen(true);
   };
 
-  const closeProjectDialog = () => setProjectForm(null);
-
-  // ---------- Save / update project from dialog ----------
-  const handleProjectFormSubmit = () => {
-    if (!projectForm) return;
-
-    const trimmedName = projectForm.name.trim();
-    if (!trimmedName) {
-      alert('Please enter a project name.');
-      return;
-    }
-
-    const finalBidNumber = parseMoneyInput(projectForm.finalBid);
-    const progressNumber =
-      Number(projectForm.progress) || 0;
-
-    const baseFields = {
-      name: trimmedName,
-      client:
-        projectForm.client.trim() || 'ABC Development Corp',
-      status: projectForm.status,
-      progress: Math.max(0, Math.min(100, progressNumber)),
-      startDate: projectForm.startDate,
-      endDate: projectForm.endDate,
-      streetAddress: projectForm.streetAddress.trim(),
-      city: projectForm.city.trim(),
-      zipCode: projectForm.zipCode.trim(),
-      description: projectForm.description.trim(),
-      finalBid: finalBidNumber,
-      imageUrl: projectForm.imageUrl,
-      imageHint: trimmedName,
-    };
-
-    const isEditMode = !!projectForm.id;
-
-    if (isEditMode) {
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.id === projectForm.id
-            ? {
-                ...p,
-                ...baseFields,
-              }
-            : p,
-        ),
-      );
-    } else {
-      const id =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : `proj-${Date.now()}-${Math.random()
-              .toString(36)
-              .slice(2, 8)}`;
-
-      const newProject: Project = {
-        id,
-        ...baseFields,
-        budget: 0,
-        spent: 0,
-        team: [],
-        budgetData: [],
-        expensesData: [],
-        getReimbursedData: [],
-        milestonesData: [],
-        drawingsData: [],
-        scheduleData: [],
-        clientUploadsData: [],
-        changeOrdersData: [],
-        applicationsData: [],
-      };
-
-      setProjects((prev) => [newProject, ...prev]);
-    }
-
-    closeProjectDialog();
+  const handleFormChange = (
+    field: keyof NewProjectForm,
+    value: string,
+  ) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleDeleteProject = (id: string) => {
-    const project = projects.find((p) => p.id === id);
-    const name = project?.name ?? 'this project';
-    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) {
-      return;
-    }
-    setProjects((prev) => prev.filter((p) => p.id !== id));
-  };
-
-  // ---------- Image upload ----------
-  const handleImageChange = (
+  const handleProjectImageChange = (
     e: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = e.target.files?.[0];
-    if (!file || !projectForm) return;
+    if (!file) return;
 
     const reader = new FileReader();
     reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setProjectForm((prev) =>
-        prev
-          ? {
-              ...prev,
-              imageUrl: dataUrl,
-            }
-          : prev,
-      );
+      handleFormChange('imageUrl', String(reader.result));
     };
     reader.readAsDataURL(file);
   };
 
-  // ---------- Derived / filtered list ----------
-  const filteredProjects = React.useMemo(() => {
-    const term = searchTerm.toLowerCase().trim();
-    return projects.filter((project) => {
-      const matchesSearch =
-        !term ||
-        project.name.toLowerCase().includes(term) ||
-        project.client.toLowerCase().includes(term) ||
-        (project.city ?? '').toLowerCase().includes(term) ||
-        (project.zipCode ?? '').toLowerCase().includes(term);
+  const upsertProject = () => {
+    const base: Project = {
+      id: editingProjectId ?? `project-${Date.now()}`,
+      name: form.name || 'Untitled Project',
+      client: form.client,
+      status: form.status,
+      progress: Number(form.progress) || 0,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      budget: Number(form.internalContractAmount) || 0,
+      spent: 0,
+      imageUrl:
+        form.imageUrl ||
+        '/images/placeholders/project-placeholder-wide.png',
+      imageHint: '',
+      streetAddress: form.streetAddress,
+      city: form.city,
+      zipCode: form.zipCode,
+      description: form.description,
+      finalBid: Number(form.finalBidToCustomer) || 0,
+      budgetData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)?.budgetData ??
+          []
+        : [],
+      expensesData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)?.expensesData ??
+          []
+        : [],
+      getReimbursedData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.getReimbursedData ?? []
+        : [],
+      milestonesData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.milestonesData ?? []
+        : [],
+      drawingsData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.drawingsData ?? []
+        : [],
+      scheduleData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.scheduleData ?? []
+        : [],
+      clientUploadsData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.clientUploadsData ?? []
+        : [],
+      changeOrdersData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.changeOrdersData ?? []
+        : [],
+      applicationsData: editingProjectId
+        ? projects.find((p) => p.id === editingProjectId)
+            ?.applicationsData ?? []
+        : [],
+    };
 
-      const matchesStatus =
-        statusFilter === 'all' ||
-        project.status === statusFilter;
-
-      return matchesSearch && matchesStatus;
-    });
-  }, [projects, searchTerm, statusFilter]);
-
-  // ---------- Card metric helpers ----------
-  const getTotalBudget = (project: Project) => {
-    const items = (project.budgetData ?? []) as any[];
-    return items.reduce(
-      (sum, item) => sum + (item.originalBudget ?? 0),
-      0,
-    );
-  };
-
-  const getTotalSpent = (project: Project) => {
-    const items = (project.expensesData ?? []) as any[];
-    return items.reduce(
-      (sum, item) => sum + (item.amount ?? 0),
-      0,
-    );
-  };
-
-  const getProfitLoss = (project: Project) => {
-    const finalBid =
-      project.finalBid ??
-      (project.budgetData ?? []).reduce(
-        (sum: number, item: any) =>
-          sum + (item.finalBidToCustomer ?? 0),
-        0,
+    if (editingProjectId) {
+      setProjects((prev) =>
+        prev.map((p) => (p.id === editingProjectId ? base : p)),
       );
-    const spent = getTotalSpent(project);
-    return finalBid - spent;
-  };
-
-  const getBudgetStatusPercent = (project: Project) => {
-    const budget = getTotalBudget(project);
-    const spent = getTotalSpent(project);
-    if (budget <= 0) return 0;
-    return Math.min(200, (spent / budget) * 100);
-  };
-
-  const getStatusBadgeColor = (status: Project['status']) => {
-    switch (status) {
-      case 'Active':
-        return 'bg-blue-100 text-blue-700';
-      case 'Planning':
-        return 'bg-amber-100 text-amber-700';
-      case 'Completed':
-        return 'bg-emerald-100 text-emerald-700';
-      case 'On Hold':
-      default:
-        return 'bg-slate-200 text-slate-700';
+    } else {
+      setProjects((prev) => [base, ...prev]);
     }
+
+    setIsDialogOpen(false);
+  };
+
+  const deleteProject = (id: string) => {
+    if (
+      !window.confirm(
+        'Are you sure you want to delete this project?',
+      )
+    )
+      return;
+    setProjects((prev) => prev.filter((p) => p.id !== id));
   };
 
   if (!isMounted) {
@@ -429,399 +377,69 @@ export default function ProjectsPage() {
 
   return (
     <>
-      {/* Create / Edit Project dialog */}
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          if (!open) closeProjectDialog();
-        }}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              {projectForm?.id
-                ? 'Edit Project'
-                : 'Create New Project'}
-            </DialogTitle>
-            <p className="text-xs text-muted-foreground">
-              Fill out the details below to create a new
-              construction project.
-            </p>
-          </DialogHeader>
-
-          {projectForm && (
-            <div className="grid gap-4 py-2">
-              {/* Project Name */}
-              <div className="space-y-1">
-                <Label>Project Name</Label>
-                <Input
-                  placeholder="e.g., Riverfront Residences"
-                  value={projectForm.name}
-                  onChange={(e) =>
-                    setProjectForm((f) =>
-                      f
-                        ? { ...f, name: e.target.value }
-                        : f,
-                    )
-                  }
-                />
-              </div>
-
-              {/* Project Image */}
-              <div className="space-y-2">
-                <Label>Project Image</Label>
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="flex h-24 w-40 items-center justify-center rounded-md border border-dashed bg-muted/40 overflow-hidden">
-                    {projectForm.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={projectForm.imageUrl}
-                        alt={projectForm.name || 'Project image'}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-xs text-muted-foreground gap-1">
-                        <UploadCloud className="h-5 w-5" />
-                        <span>Upload image</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        fileInputRef.current?.click()
-                      }
-                    >
-                      Choose File
-                    </Button>
-                    <p className="text-xs text-muted-foreground">
-                      PNG or JPG, up to ~2MB.
-                    </p>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleImageChange}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Client */}
-              <div className="space-y-1">
-                <Label>Client</Label>
-                <Input
-                  placeholder="e.g., ABC Development Corp"
-                  value={projectForm.client}
-                  onChange={(e) =>
-                    setProjectForm((f) =>
-                      f
-                        ? { ...f, client: e.target.value }
-                        : f,
-                    )
-                  }
-                />
-              </div>
-
-              {/* Street address */}
-              <div className="space-y-1">
-                <Label>Street Address</Label>
-                <Input
-                  placeholder="e.g., 123 Main St"
-                  value={projectForm.streetAddress}
-                  onChange={(e) =>
-                    setProjectForm((f) =>
-                      f
-                        ? {
-                            ...f,
-                            streetAddress: e.target.value,
-                          }
-                        : f,
-                    )
-                  }
-                />
-              </div>
-
-              {/* City / Zip */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label>City</Label>
-                  <Input
-                    placeholder="e.g., Metropolis"
-                    value={projectForm.city}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              city: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Zip Code</Label>
-                  <Input
-                    placeholder="e.g., 12345"
-                    value={projectForm.zipCode}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              zipCode: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className="space-y-1">
-                <Label>Description</Label>
-                <textarea
-                  className="w-full rounded-md border border-input px-3 py-2 text-sm"
-                  rows={3}
-                  placeholder="Project details and scope..."
-                  value={projectForm.description}
-                  onChange={(e) =>
-                    setProjectForm((f) =>
-                      f
-                        ? {
-                            ...f,
-                            description: e.target.value,
-                          }
-                        : f,
-                    )
-                  }
-                />
-              </div>
-
-              {/* Internal contract / final bid */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label>Internal Contract Amount</Label>
-                  <Input
-                    placeholder="0"
-                    value={projectForm.internalContractAmount}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              internalContractAmount:
-                                e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Final Bid to Customer</Label>
-                  <Input
-                    placeholder="0"
-                    value={projectForm.finalBid}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              finalBid: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Status / progress */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label>Status</Label>
-                  <Select
-                    value={projectForm.status}
-                    onValueChange={(value) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              status:
-                                value as Project['status'],
-                            }
-                          : f,
-                      )
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Planning" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Planning">
-                        Planning
-                      </SelectItem>
-                      <SelectItem value="Active">
-                        In Progress
-                      </SelectItem>
-                      <SelectItem value="Completed">
-                        Completed
-                      </SelectItem>
-                      <SelectItem value="On Hold">
-                        On Hold
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1">
-                  <Label>Progress (%)</Label>
-                  <Input
-                    placeholder="0"
-                    value={projectForm.progress}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              progress: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Start / end dates */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label>Start Date</Label>
-                  <Input
-                    type="date"
-                    value={projectForm.startDate}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              startDate: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>End Date</Label>
-                  <Input
-                    type="date"
-                    value={projectForm.endDate}
-                    onChange={(e) =>
-                      setProjectForm((f) =>
-                        f
-                          ? {
-                              ...f,
-                              endDate: e.target.value,
-                            }
-                          : f,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={closeProjectDialog}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleProjectFormSubmit}>
-              {projectForm?.id ? 'Save Project' : 'Create Project'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
+        <div className="max-w-5xl mx-auto space-y-6">
+          {/* Top header row */}
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"></div>
         <div>
-          <h1 className="text-2xl font-bold font-headline tracking-tight">
+          <h1 className="text-2xl font-bold tracking-tight">
             Projects
           </h1>
           <p className="text-sm text-muted-foreground">
-            Manage all your construction projects from start to finish.
+            Manage all your construction projects from start to
+            finish.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={handleSaveSnapshot}
-            disabled={isSavingSnapshot}
           >
             <CloudUpload className="mr-2 h-4 w-4" />
-            {isSavingSnapshot
-              ? 'Saving…'
-              : 'Save Snapshot to Cloud'}
+            Save Snapshot to Cloud
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={handleLoadSnapshot}
-            disabled={isLoadingSnapshot}
           >
             <CloudDownload className="mr-2 h-4 w-4" />
-            {isLoadingSnapshot
-              ? 'Loading…'
-              : 'Load Latest Snapshot'}
+            Load Latest Snapshot
           </Button>
-          <Button onClick={openCreateProjectDialog}>
+          <Button size="sm" onClick={openNewProjectDialog}>
             <Plus className="mr-2 h-4 w-4" />
             New Project
           </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="w-full md:max-w-md">
-          <Input
-            placeholder="Search by project name, client, city, or zip"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
+      {/* Filters row */}
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <Input
+          placeholder="Search by project name, client, city, or zip"
+          className="md:max-w-md"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">
+          <span className="text-sm text-muted-foreground">
             Status
           </span>
           <Select
             value={statusFilter}
-            onValueChange={(value) =>
-              setStatusFilter(value as StatusFilter)
+            onValueChange={(v) =>
+              setStatusFilter(v as Project['status'] | 'all')
             }
           >
-            <SelectTrigger className="w-[160px]">
+            <SelectTrigger className="w-40">
               <SelectValue placeholder="All statuses" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="Active">Active</SelectItem>
               <SelectItem value="Planning">Planning</SelectItem>
-              <SelectItem value="Active">In Progress</SelectItem>
               <SelectItem value="Completed">Completed</SelectItem>
               <SelectItem value="On Hold">On Hold</SelectItem>
             </SelectContent>
@@ -829,148 +447,106 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {/* Cards */}
-      {filteredProjects.length === 0 ? (
-        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          No projects found. Try adjusting your filters or add a new
-          project.
-        </div>
-      ) : (
-        <div className="grid gap-6 xl:grid-cols-2">
-          {filteredProjects.map((project) => {
-            const totalBudget = getTotalBudget(project);
-            const spent = getTotalSpent(project);
-            const pl = getProfitLoss(project);
-            const budgetPct = getBudgetStatusPercent(project);
-
-            const maxVal = Math.max(
-              project.finalBid ?? 0,
-              totalBudget,
-              spent,
-              Math.abs(pl),
-              1,
-            );
-            const barHeight = (val: number) =>
-              `${(val / maxVal) * 80 || 2}%`;
+      {/* Project list */}
+            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+        {filteredProjects.length === 0 ? (
+          <Card className="md:col-span-2 xl:col-span-3">
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              No projects found. Try adjusting your filters or add a
+              new project.
+            </CardContent>
+          </Card>
+        ) : (
+          filteredProjects.map((project) => {
+            const financials = computeFinancials(project);
 
             return (
               <Card
                 key={project.id}
-                className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() =>
-                  router.push(`/projects/${project.id}`)
-                }
+                className="h-full flex flex-col overflow-hidden hover:border-primary/40 transition"
               >
-                {/* Image strip */}
-                <div className="h-40 w-full bg-slate-200 overflow-hidden">
-                  {project.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={project.imageUrl}
-                      alt={project.imageHint || project.name}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm text-slate-500">
-                      Project elevation / hero image
+                {/* Make entire card clickable */}
+                <div
+                  className="cursor-pointer flex-1 flex flex-col"
+                  onClick={() =>
+                    router.push(`/projects/${project.id}`)
+                  }
+                >
+                  {/* Top image */}
+                  {project.imageUrl && (
+                    <div className="aspect-[5/1] w-full overflow-hidden bg-slate-100">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={project.imageUrl}
+                        alt={project.name}
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                   )}
-                </div>
 
-                <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3 pt-4">
-                  <div className="space-y-1">
-                    <h2 className="text-base font-semibold">
-                      {project.name}
-                    </h2>
-                    <p className="text-xs text-muted-foreground">
-                      {project.description ||
-                        `${project.city ?? ''} ${
-                          project.zipCode ?? ''
-                        }`.trim()}
-                    </p>
-                  </div>
-
-                  <div className="flex items-start gap-2">
-                    <span
-                      className={`mt-1 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getStatusBadgeColor(
-                        project.status,
-                      )}`}
-                    >
-                      {project.status === 'Active'
-                        ? 'In Progress'
-                        : project.status}
-                    </span>
-
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        onClick={(e) => e.stopPropagation()}
+                  <CardHeader className="flex flex-col gap-1 border-b bg-white/60">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <CardTitle className="text-lg">
+                          {project.name}
+                        </CardTitle>
+                        <CardDescription>
+                          {project.client}
+                          {project.city
+                            ? ` • ${project.city}`
+                            : ''}
+                          {project.streetAddress
+                            ? ` • ${project.streetAddress}`
+                            : ''}
+                        </CardDescription>
+                      </div>
+                      <Badge
+                        variant={
+                          project.status === 'Completed'
+                            ? 'default'
+                            : project.status === 'Active'
+                            ? 'outline'
+                            : 'secondary'
+                        }
                       >
-                        <DropdownMenuItem
-                          onClick={() =>
-                            openEditProjectDialog(project)
-                          }
-                        >
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() =>
-                            router.push(
-                              `/projects/${project.id}`,
-                            )
-                          }
-                        >
-                          Open Project
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() =>
-                            handleDeleteProject(project.id)
-                          }
-                        >
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="pb-5 pt-0">
-                  {/* Budget status */}
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="font-medium">
-                        Budget Status
-                      </span>
-                      <span className="text-muted-foreground">
-                        {budgetPct.toFixed(1)}% Used
-                      </span>
+                        {project.status}
+                      </Badge>
                     </div>
-                    <Progress value={budgetPct} />
-                  </div>
+                  </CardHeader>
 
-                  {/* Money stats + tiny bars */}
-                  <div className="grid gap-4 md:grid-cols-[2fr,1fr] items-end">
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs">
+                  <CardContent className="space-y-4 pt-4 flex-1 flex flex-col">
+                    {/* Budget status bar */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Budget Status</span>
+                        <span>
+                          {project.progress?.toFixed?.(1) ??
+                            project.progress}
+                          % Used
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-sky-600"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              project.progress ?? 0,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Numbers row */}
+                    <div className="grid gap-4 text-xs md:grid-cols-4">
                       <div>
                         <div className="text-muted-foreground">
                           Final Bid
                         </div>
                         <div className="font-semibold">
                           $
-                          {formatMoney(
-                            project.finalBid ?? 0,
-                          )}
+                          {financials.finalBid.toLocaleString()}
                         </div>
                       </div>
                       <div>
@@ -978,7 +554,8 @@ export default function ProjectsPage() {
                           Total Budget (cost)
                         </div>
                         <div className="font-semibold">
-                          ${formatMoney(totalBudget)}
+                          $
+                          {financials.totalBudget.toLocaleString()}
                         </div>
                       </div>
                       <div>
@@ -986,115 +563,349 @@ export default function ProjectsPage() {
                           Spent to Date
                         </div>
                         <div className="font-semibold">
-                          ${formatMoney(spent)}
+                          $
+                          {financials.spent.toLocaleString()}
                         </div>
                       </div>
                       <div>
                         <div className="text-muted-foreground">
-                          Remaining Budget
-                        </div>
-                        <div className="font-semibold">
-                          $
-                          {formatMoney(
-                            Math.max(totalBudget - spent, 0),
-                          )}
-                        </div>
-                      </div>
-                      <div className="md:col-span-2">
-                        <div className="text-muted-foreground">
                           Profit / Loss
                         </div>
                         <div
-                          className={`font-semibold ${
-                            pl >= 0
+                          className={
+                            'font-semibold ' +
+                            (financials.profitLoss >= 0
                               ? 'text-emerald-600'
-                              : 'text-destructive'
-                          }`}
+                              : 'text-red-500')
+                          }
                         >
-                          ${formatMoney(pl)}
+                          {financials.profitLoss >= 0 ? '+' : '-'}$
+                          {Math.abs(
+                            financials.profitLoss,
+                          ).toLocaleString()}
                         </div>
                       </div>
                     </div>
 
-                    {/* Mini bar chart */}
-                    <div className="flex h-24 items-end justify-between gap-3">
-                      <div className="flex-1 flex flex-col items-center gap-1">
-                        <div
-                          className="w-4 rounded-t bg-emerald-500"
-                          style={{
-                            height: barHeight(
-                              project.finalBid ?? 0,
-                            ),
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">
-                          Final Bid
-                        </span>
-                      </div>
-                      <div className="flex-1 flex flex-col items-center gap-1">
-                        <div
-                          className="w-4 rounded-t bg-blue-500"
-                          style={{
-                            height: barHeight(totalBudget),
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">
-                          Budget
-                        </span>
-                      </div>
-                      <div className="flex-1 flex flex-col items-center gap-1">
-                        <div
-                          className="w-4 rounded-t bg-amber-500"
-                          style={{
-                            height: barHeight(spent),
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">
-                          Spent
-                        </span>
-                      </div>
-                      <div className="flex-1 flex flex-col items-center gap-1">
-                        <div
-                          className={`w-4 rounded-t ${
-                            pl >= 0
-                              ? 'bg-emerald-500'
-                              : 'bg-red-500'
-                          }`}
-                          style={{
-                            height: barHeight(Math.abs(pl)),
-                          }}
-                        />
-                        <span className="text-[10px] text-muted-foreground">
-                          Profit/Loss
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                    {/* Mini chart + Open Project / Edit / Delete */}
+                    <div className="mt-4 flex flex-col items-end gap-4 md:flex-row md:items-end md:justify-between">
+                      {/* Mini bar chart */}
+                      <div className="flex items-end gap-4">
+                        {/* Final Bid */}
+                        <div className="flex flex-col items-center gap-1 text-[11px]">
+                          <div
+                            className="w-4 rounded-sm bg-sky-500"
+                            style={{
+                              height: `${financials.bars.finalBid * 0.7}px`,
+                            }}
+                          />
+                          <span className="font-medium">
+                            Final Bid
+                          </span>
+                        </div>
 
-                  {/* Timeline */}
-                  <div className="mt-4 flex items-center justify-between text-[11px] text-muted-foreground">
-                    <div>
-                      <span className="font-medium text-foreground">
-                        Timeline:{' '}
-                      </span>
-                      {project.startDate && project.endDate
-                        ? `${project.startDate} → ${project.endDate}`
-                        : 'Dates not set'}
+                        {/* Budget */}
+                        <div className="flex flex-col items-center gap-1 text-[11px]">
+                          <div
+                            className="w-4 rounded-sm bg-slate-400"
+                            style={{
+                              height: `${financials.bars.totalBudget * 0.7}px`,
+                            }}
+                          />
+                          <span className="font-medium">
+                            Budget
+                          </span>
+                        </div>
+
+                        {/* Spent */}
+                        <div className="flex flex-col items-center gap-1 text-[11px]">
+                          <div
+                            className="w-4 rounded-sm bg-emerald-500"
+                            style={{
+                              height: `${financials.bars.spent * 0.7}px`,
+                            }}
+                          />
+                          <span className="font-medium">
+                            Spent
+                          </span>
+                        </div>
+
+                        {/* Profit/Loss */}
+                        <div className="flex flex-col items-center gap-1 text-[11px]">
+                          <div
+                            className={
+                              'w-4 rounded-sm ' +
+                              (financials.profitLoss >= 0
+                                ? 'bg-emerald-600'
+                                : 'bg-red-500')
+                            }
+                            style={{
+                              height: `${financials.bars.profitLoss * 0.7}px`,
+                            }}
+                          />
+                          <span className="font-medium">
+                            Profit/Loss
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Right side buttons (don’t stop card click) */}
+                      <div
+                        className="flex gap-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openEditDialog(project)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => deleteProject(project.id)}
+                        >
+                          Delete
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            router.push(`/projects/${project.id}`)
+                          }
+                        >
+                          Open Project
+                        </Button>
+                      </div>
                     </div>
-                    <Link
-                      href={`/projects/${project.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Open Project
-                    </Link>
-                  </div>
-                </CardContent>
+                  </CardContent>
+                </div>
               </Card>
             );
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div> {/* end max-w container */}
+
+      {/* Create / Edit Project dialog */}
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={setIsDialogOpen}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {editingProjectId
+                ? 'Edit Project'
+                : 'Create New Project'}
+            </DialogTitle>
+            <DialogDescription>
+              Fill out the details below to create a new construction
+              project.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="space-y-1">
+              <Label>Project Name</Label>
+              <Input
+                placeholder="e.g., Riverfront Residences"
+                value={form.name}
+                onChange={(e) =>
+                  handleFormChange('name', e.target.value)
+                }
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
+              <div className="space-y-1">
+                <Label>Client</Label>
+                <Input
+                  placeholder="e.g., ABC Development Corp"
+                  value={form.client}
+                  onChange={(e) =>
+                    handleFormChange('client', e.target.value)
+                  }
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label>Project Image</Label>
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProjectImageChange}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[2fr,1fr]">
+              <div className="space-y-1">
+                <Label>Street Address</Label>
+                <Input
+                  placeholder="e.g., 123 Main St"
+                  value={form.streetAddress}
+                  onChange={(e) =>
+                    handleFormChange(
+                      'streetAddress',
+                      e.target.value,
+                    )
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label>City</Label>
+                  <Input
+                    placeholder="e.g., Metropolis"
+                    value={form.city}
+                    onChange={(e) =>
+                      handleFormChange('city', e.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Zip Code</Label>
+                  <Input
+                    placeholder="e.g., 12345"
+                    value={form.zipCode}
+                    onChange={(e) =>
+                      handleFormChange('zipCode', e.target.value)
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Description</Label>
+              <Input
+                placeholder="Project details and scope..."
+                value={form.description}
+                onChange={(e) =>
+                  handleFormChange('description', e.target.value)
+                }
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Internal Contract Amount</Label>
+                <Input
+                  type="number"
+                  value={form.internalContractAmount}
+                  onChange={(e) =>
+                    handleFormChange(
+                      'internalContractAmount',
+                      e.target.value,
+                    )
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Final Bid to Customer</Label>
+                <Input
+                  type="number"
+                  value={form.finalBidToCustomer}
+                  onChange={(e) =>
+                    handleFormChange(
+                      'finalBidToCustomer',
+                      e.target.value,
+                    )
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Status</Label>
+                <Select
+                  value={form.status}
+                  onValueChange={(v) =>
+                    handleFormChange(
+                      'status',
+                      v as Project['status'],
+                    )
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Planning">
+                      Planning
+                    </SelectItem>
+                    <SelectItem value="Active">
+                      Active
+                    </SelectItem>
+                    <SelectItem value="Completed">
+                      Completed
+                    </SelectItem>
+                    <SelectItem value="On Hold">
+                      On Hold
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Progress (%)</Label>
+                <Input
+                  type="number"
+                  value={form.progress}
+                  onChange={(e) =>
+                    handleFormChange(
+                      'progress',
+                      e.target.value,
+                    )
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Start Date</Label>
+                <Input
+                  type="text"
+                  placeholder="MM/DD/YYYY"
+                  value={form.startDate}
+                  onChange={(e) =>
+                    handleFormChange(
+                      'startDate',
+                      e.target.value,
+                    )
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>End Date</Label>
+                <Input
+                  type="text"
+                  placeholder="MM/DD/YYYY"
+                  value={form.endDate}
+                  onChange={(e) =>
+                    handleFormChange('endDate', e.target.value)
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={upsertProject}>
+              {editingProjectId
+                ? 'Save Changes'
+                : 'Create Project'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
