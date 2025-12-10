@@ -2,97 +2,118 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 
-// We store everything for this app in a single row with a fixed UUID
-// This must be a valid UUID string
-const SNAPSHOT_ROW_ID = '00000000-0000-0000-0000-000000000001';
-
-
-type SnapshotBody = {
-  projects: unknown;
-  budgetCategories?: unknown;
-  vendors?: unknown;
-};
-
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as SnapshotBody;
-
-    const supabase = getSupabaseAdmin();
-
-    // Put *everything* into payload so we only need that one column
-    const payload = {
-      projects: body.projects,
-      budgetCategories: body.budgetCategories ?? null,
-      vendors: body.vendors ?? null,
-      savedAt: new Date().toISOString(),
-    };
-
-    const { error } = await supabase
-  .from('snapshots')
-  .upsert(
-    {
-      id: SNAPSHOT_ROW_ID,
-      payload,
-      updated_at: new Date().toISOString(),
-    },
-    {
-      onConflict: 'id', // ensure we overwrite the same row
-    },
-  );
-
-
-    if (error) {
-      console.error('[snapshot POST] Supabase error:', error);
-      return NextResponse.json(
-        { success: false, error: error.message },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    console.error('[snapshot POST] Unexpected error:', err);
-    return NextResponse.json(
-      { success: false, error: 'Unexpected server error' },
-      { status: 500 },
-    );
-  }
-}
-
+// -----------------------
+// GET  /api/snapshot
+// -----------------------
 export async function GET() {
   try {
     const supabase = getSupabaseAdmin();
 
+    // Always take the most recent snapshot row
     const { data, error } = await supabase
-  .from('snapshots')
-  .select('payload')
-  .eq('id', SNAPSHOT_ROW_ID)
-  .single();
-
+      .from('snapshots')
+      .select('payload, budget_categories, vendors, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
 
     if (error) {
       console.error('[snapshot GET] Supabase error:', error);
       return NextResponse.json(
-        { success: false, error: error.message },
+        { error: 'Failed to load snapshot from Supabase.' },
         { status: 500 },
       );
     }
 
     if (!data || !data.payload) {
       return NextResponse.json(
-        { success: false, error: 'No snapshot found' },
+        { error: 'No snapshot row found.' },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({
-      success: true,
-      payload: data.payload,
-    });
+    let payloadJson: any;
+    try {
+      // If payload is jsonb, Supabase SDK already gives us an object.
+      payloadJson =
+        typeof data.payload === 'string'
+          ? JSON.parse(data.payload)
+          : data.payload;
+    } catch (e) {
+      console.error('[snapshot GET] Failed to parse payload JSON:', e);
+      return NextResponse.json(
+        { error: 'Snapshot payload is invalid JSON.' },
+        { status: 500 },
+      );
+    }
+
+    if (!payloadJson.projects || !Array.isArray(payloadJson.projects)) {
+      return NextResponse.json(
+        { error: 'Snapshot payload has no valid projects array.' },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        projects: payloadJson.projects,
+        savedAt: payloadJson.savedAt,
+        budgetCategories: data.budget_categories ?? null,
+        vendors: data.vendors ?? null,
+      },
+      { status: 200 },
+    );
   } catch (err) {
     console.error('[snapshot GET] Unexpected error:', err);
     return NextResponse.json(
-      { success: false, error: 'Unexpected server error' },
+      { error: 'Unexpected error loading snapshot.' },
+      { status: 500 },
+    );
+  }
+}
+
+// -----------------------
+// POST  /api/snapshot
+// -----------------------
+export async function POST(req: Request) {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const body = await req.json();
+    const projects = body?.projects ?? [];
+    const budgetCategories = body?.budgetCategories ?? null;
+    const vendors = body?.vendors ?? null;
+
+    const payload = {
+      projects,
+      savedAt: new Date().toISOString(),
+    };
+
+    // Insert a NEW row each time; "latest snapshot" is the one with the max created_at
+    const { error } = await supabase.from('snapshots').insert([
+      {
+        payload,
+        budget_categories: budgetCategories,
+        vendors,
+      },
+    ]);
+
+    if (error) {
+      console.error('[snapshot POST] Supabase error:', error);
+      return NextResponse.json(
+        { error: 'Failed to save snapshot to Supabase.' },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      { ok: true, message: 'Snapshot saved successfully.' },
+      { status: 200 },
+    );
+  } catch (err) {
+    console.error('[snapshot POST] Unexpected error:', err);
+    return NextResponse.json(
+      { error: 'Unexpected error saving snapshot.' },
       { status: 500 },
     );
   }
