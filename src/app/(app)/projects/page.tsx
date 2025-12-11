@@ -3,6 +3,8 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, CloudUpload, CloudDownload } from 'lucide-react';
+import { differenceInDays, parse, isValid, format } from 'date-fns';
+
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -53,6 +55,44 @@ const computeFinancials = (project: Project) => {
     (sum: number, exp: any) => sum + (exp.amount ?? 0),
     0,
   );
+
+  function parseProjectDate(raw?: string | null): Date | null {
+  if (!raw) return null;
+
+  const formats = ['MM/dd/yyyy', 'MMM d, yyyy']; // support both picker + old format
+  for (const fmt of formats) {
+    try {
+      const d = parse(raw, fmt, new Date());
+      if (isValid(d)) return d;
+    } catch {
+      // ignore and try next format
+    }
+  }
+  return null;
+}
+
+function computeTimelineInfo(project: Project) {
+  const start = parseProjectDate((project as any).startDate);
+  const end = parseProjectDate((project as any).endDate);
+  const today = new Date();
+
+  let daysFromStart = 0;
+  let daysToEnd = 0;
+  let totalDays = 0;
+
+  if (start && end && start < end) {
+    totalDays = Math.max(0, differenceInDays(end, start));
+    daysFromStart = Math.max(0, differenceInDays(today, start));
+    daysFromStart = Math.min(daysFromStart, totalDays);
+
+    daysToEnd = Math.max(0, differenceInDays(end, today));
+  }
+
+  const startLabel = start ? format(start, 'MM/dd/yyyy') : 'No start date';
+  const endLabel = end ? format(end, 'MM/dd/yyyy') : 'No end date';
+
+  return { startLabel, endLabel, daysFromStart, daysToEnd, totalDays };
+}
 
   const profitLoss = finalBid - spent;
 
@@ -113,6 +153,61 @@ const emptyForm: NewProjectForm = {
   endDate: '',
   imageUrl: '',
 };
+
+// --- schedule / timeline helpers ---
+
+function parseProjectDate(raw?: string | null): Date | null {
+  if (!raw) return null;
+
+  const formats = ['MM/dd/yyyy', 'MMM d, yyyy']; // support both picker + older text dates
+  for (const fmt of formats) {
+    try {
+      const d = parse(raw, fmt, new Date());
+      if (isValid(d)) return d;
+    } catch {
+      // try next format
+    }
+  }
+  return null;
+}
+
+function computeTimelineInfo(project: Project) {
+  const start = parseProjectDate((project as any).startDate);
+  const end = parseProjectDate((project as any).endDate);
+  const today = new Date();
+
+  let daysFromStart = 0;
+  let daysToEnd = 0;
+  let totalDays = 0;
+
+  if (start && end && start < end) {
+    totalDays = Math.max(0, differenceInDays(end, start));
+    daysFromStart = Math.max(0, differenceInDays(today, start));
+    daysFromStart = Math.min(daysFromStart, totalDays);
+
+    daysToEnd = Math.max(0, differenceInDays(end, today));
+  }
+
+  const startLabel = start ? format(start, 'MM/dd/yyyy') : 'No start date';
+  const endLabel = end ? format(end, 'MM/dd/yyyy') : 'No end date';
+
+  return { startLabel, endLabel, daysFromStart, daysToEnd, totalDays };
+}
+
+function getBudgetStatusColor(usedPercent: number): string {
+  if (usedPercent < 60) {
+    // Healthy – under 60% of budget used
+    return 'bg-emerald-500';
+  }
+  if (usedPercent < 90) {
+    // Getting high – 60–89%
+    return 'bg-amber-400';
+  }
+  // Danger zone – 90%+ used
+  return 'bg-red-500';
+}
+
+
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -458,7 +553,20 @@ export default function ProjectsPage() {
           </Card>
         ) : (
           filteredProjects.map((project) => {
+            const timeline = computeTimelineInfo(project);
             const financials = computeFinancials(project);
+
+            
+            const usedPercent =
+            financials.totalBudget > 0
+              ? Math.min(
+                  100,
+                  (financials.spent / financials.totalBudget) * 100,
+                )
+              : 0;
+
+
+            
 
             return (
               <Card
@@ -515,28 +623,50 @@ export default function ProjectsPage() {
                   </CardHeader>
 
                   <CardContent className="space-y-4 pt-4 flex-1 flex flex-col">
+                    
                     {/* Budget status bar */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>Budget Status</span>
-                        <span>
-                          {project.progress?.toFixed?.(1) ??
-                            project.progress}
-                          % Used
-                        </span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-sky-600"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              project.progress ?? 0,
-                            )}%`,
-                          }}
-                        />
-                      </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Budget Status</span>
+                      <span>{usedPercent.toFixed(1)}% Used</span>
                     </div>
+
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      {(() => {
+                        const color = getBudgetStatusColor(usedPercent);
+                        return (
+                          <div
+                            className={`h-full rounded-full ${color}`}
+                            style={{ width: `${usedPercent}%` }}
+                          />
+                        );
+                      })()}
+                    </div>
+
+ 
+
+
+  {/* schedule: dates + days */}
+  <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+    <div className="flex flex-col">
+      <span>{timeline.startLabel}</span>
+      {timeline.totalDays > 0 && (
+        <span className="text-[10px]">
+          {timeline.daysFromStart} days from start
+        </span>
+      )}
+    </div>
+    <div className="flex flex-col text-right">
+      <span>{timeline.endLabel}</span>
+      {timeline.totalDays > 0 && (
+        <span className="text-[10px]">
+          {timeline.daysToEnd} days to end
+        </span>
+      )}
+    </div>
+  </div>
+</div>
+
 
                     {/* Numbers row */}
                     <div className="grid gap-4 text-xs md:grid-cols-4">

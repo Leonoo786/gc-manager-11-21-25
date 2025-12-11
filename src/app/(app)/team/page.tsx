@@ -124,10 +124,17 @@ export default function TeamPage() {
                 <TableRow key={member.id}>
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={member.avatarUrl} data-ai-hint="person face" />
-                        <AvatarFallback>{member.fallback}</AvatarFallback>
-                      </Avatar>
+                      <Avatar className="h-8 w-8 rounded-md overflow-hidden">
+                        <AvatarImage
+                          src={member.avatarUrl}
+                          data-ai-hint="person face"
+                          className="rounded-none"
+                        />
+                        <AvatarFallback className="rounded-none">
+                          {member.fallback}
+                          </AvatarFallback>
+                        </Avatar>
+
                       <span className="font-medium">{member.name}</span>
                     </div>
                   </TableCell>

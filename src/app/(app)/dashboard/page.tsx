@@ -11,9 +11,11 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import Link from 'next/link';
+
 import type { ChartConfig } from '@/components/ui/chart';
 import * as React from 'react';
-import { differenceInDays, parse, isValid } from 'date-fns';
+import { format, parse, isValid, differenceInDays } from 'date-fns';
+
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -54,7 +56,7 @@ import { type Project } from '../projects/projects-data';
 import { tasksData } from '../tasks/tasks-data';
 import { teamMembers } from '../team/team-data';
 
-// 🔐 NEW: get auth user so we can show their name
+// auth helper
 import { getCurrentUser, type AuthUser } from '@/lib/auth';
 
 const chartConfig = {
@@ -79,11 +81,88 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
+type CategorySummary = {
+  category: string;
+  totalBudget: number;
+  totalSpent: number;
+  utilization: number;
+};
+
+type ActivityItem = {
+  id: string;
+  label: string;
+  date: Date;
+  meta?: string;
+};
+
+function parseProjectDate(raw?: string | null): Date | null {
+  if (!raw) return null;
+
+  // Try several formats – in order
+  const formats = ['yyyy-MM-dd', 'MM/dd/yyyy', 'MMM d, yyyy'];
+
+  for (const fmt of formats) {
+    const d = parse(raw, fmt, new Date());
+    if (isValid(d)) return d;
+  }
+
+  return null;
+}
+
+
+function formatProjectDate(date: Date | null): string {
+  if (!date) return 'No date';
+  return format(date, 'MM/dd/yyyy'); // 12/06/2025 style
+}
+
+type DashboardTimelineInfo = {
+  startLabel: string;
+  currentLabel: string;
+  endLabel: string;
+  totalDaysLabel: string;
+  progressPercent: number;
+};
+
+function computeDashboardTimeline(project: Project): DashboardTimelineInfo {
+  const start = parseProjectDate(project.startDate);
+  const end = parseProjectDate(project.endDate);
+  const today = new Date();
+
+  // Labels
+  const startLabel = start ? formatProjectDate(start) : 'No start date';
+  const endLabel = end ? formatProjectDate(end) : 'No end date';
+
+  let totalDaysLabel = 'N/A';
+  let currentLabel = 'N/A';
+  let progressPercent = 0;
+
+  if (start && end && end > start) {
+    const totalDays = Math.max(differenceInDays(end, start), 1);
+    const daysSoFar = Math.min(
+      Math.max(differenceInDays(today, start), 0),
+      totalDays,
+    );
+
+    totalDaysLabel = `${totalDays} days`;
+    currentLabel = `${format(today, 'MM/dd/yyyy')} • ${daysSoFar} days so far`;
+    progressPercent = (daysSoFar / totalDays) * 100;
+  }
+
+  return {
+    startLabel,
+    currentLabel,
+    endLabel,
+    totalDaysLabel,
+    progressPercent,
+  };
+}
+
+
 export default function DashboardPage() {
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [isMounted, setIsMounted] = React.useState(false);
   const [teamSearch, setTeamSearch] = React.useState('');
-  const [user, setUser] = React.useState<AuthUser | null>(null); // NEW
+  const [user, setUser] = React.useState<AuthUser | null>(null);
 
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -92,11 +171,11 @@ export default function DashboardPage() {
     }
     setIsMounted(true);
 
-    // read current user from localStorage
     const u = getCurrentUser();
     setUser(u);
   }, []);
 
+  // ---------- Normalize projects with computed progress ----------
   const dashboardProjects = React.useMemo(() => {
     return projects.map((project) => {
       const startDate =
@@ -115,13 +194,13 @@ export default function DashboardPage() {
         const totalDays = differenceInDays(endDate, startDate);
         const daysPassed = Math.max(
           0,
-          differenceInDays(new Date(), startDate)
+          differenceInDays(new Date(), startDate),
         );
         progress =
           totalDays > 0
             ? Math.min(100, (daysPassed / totalDays) * 100)
             : 0;
-      } else if (project.progress) {
+      } else if (typeof project.progress === 'number') {
         progress = project.progress;
       }
 
@@ -132,9 +211,11 @@ export default function DashboardPage() {
     });
   }, [projects]);
 
+  // ---------- High-level metrics ----------
   const {
     activeProjectsCount,
     tasksDueTodayCount,
+    tasksDueToday,
     totalBudget,
     totalSpent,
     overallBudgetUtilization,
@@ -148,10 +229,7 @@ export default function DashboardPage() {
       try {
         const dueDate = new Date(t.dueDate);
         dueDate.setHours(0, 0, 0, 0);
-        return (
-          dueDate.getTime() === today.getTime() &&
-          t.status === 'pending'
-        );
+        return dueDate.getTime() === today.getTime();
       } catch {
         return false;
       }
@@ -164,7 +242,7 @@ export default function DashboardPage() {
         items.reduce(
           (bAcc: number, b: any) =>
             bAcc + (b.originalBudget ?? 0),
-          0
+          0,
         )
       );
     }, 0);
@@ -175,7 +253,7 @@ export default function DashboardPage() {
         acc +
         items.reduce(
           (eAcc: number, e: any) => eAcc + (e.amount ?? 0),
-          0
+          0,
         )
       );
     }, 0);
@@ -185,12 +263,14 @@ export default function DashboardPage() {
     return {
       activeProjectsCount: activeProjects.length,
       tasksDueTodayCount: tasksDue.length,
+      tasksDueToday: tasksDue,
       totalBudget: budget,
       totalSpent: spent,
       overallBudgetUtilization: utilization,
     };
   }, [projects]);
 
+  // ---------- Project status donut data ----------
   const projectStatusData = React.useMemo(() => {
     const statusCounts = projects.reduce(
       (acc, p) => {
@@ -198,7 +278,7 @@ export default function DashboardPage() {
         acc[status] = (acc[status] || 0) + 1;
         return acc;
       },
-      {} as Record<Project['status'], number>
+      {} as Record<Project['status'], number>,
     );
 
     return Object.entries(statusCounts).map(
@@ -208,28 +288,106 @@ export default function DashboardPage() {
         fill:
           chartConfig[status as keyof typeof chartConfig]?.color ||
           'hsl(var(--muted))',
-      })
+      }),
     );
   }, [projects]);
 
+  // ---------- Team filtering ----------
   const filteredTeamMembers = React.useMemo(() => {
     if (!teamSearch) return teamMembers;
     return teamMembers.filter((member) =>
-      member.name.toLowerCase().includes(teamSearch.toLowerCase())
+      member.name.toLowerCase().includes(teamSearch.toLowerCase()),
     );
   }, [teamSearch]);
 
+  // ---------- Helpers for progress / colors ----------
   const getProgressColorClass = (progress: number) => {
     if (progress > 100) return '[&>*]:bg-destructive';
     if (progress > 75) return '[&>*]:bg-yellow-500';
     return '[&>*]:bg-green-500';
   };
 
-  const getProgressColor = (progress: number) => {
+  const getBudgetUtilizationColor = (progress: number) => {
     if (progress > 100) return '[&>*]:bg-destructive';
     if (progress > 75) return '[&>*]:bg-yellow-500';
     return '[&>*]:bg-blue-500';
   };
+
+  // ---------- Category Budget Tracking ----------
+  const categorySummary: CategorySummary[] = React.useMemo(() => {
+    const map = new Map<string, { budget: number; spent: number }>();
+
+    projects.forEach((p) => {
+      const budgetItems = (p as any).budgetData ?? [];
+      budgetItems.forEach((item: any) => {
+        const category = (item.category || 'Uncategorized').trim();
+        if (!map.has(category)) {
+          map.set(category, { budget: 0, spent: 0 });
+        }
+        const entry = map.get(category)!;
+        entry.budget += item.originalBudget ?? 0;
+      });
+
+      const expenses = (p as any).expensesData ?? [];
+      expenses.forEach((exp: any) => {
+        const category = (exp.category || 'Uncategorized').trim();
+        if (!map.has(category)) {
+          map.set(category, { budget: 0, spent: 0 });
+        }
+        const entry = map.get(category)!;
+        entry.spent += exp.amount ?? 0;
+      });
+    });
+
+    const arr: CategorySummary[] = Array.from(map.entries()).map(
+      ([category, { budget, spent }]) => ({
+        category,
+        totalBudget: budget,
+        totalSpent: spent,
+        utilization: budget > 0 ? (spent / budget) * 100 : 0,
+      }),
+    );
+
+    // sort by spent descending
+    arr.sort((a, b) => b.totalSpent - a.totalSpent);
+
+    return arr;
+  }, [projects]);
+
+  // ---------- Recent Activity ----------
+  const recentActivity: ActivityItem[] = React.useMemo(() => {
+    const items: ActivityItem[] = [];
+
+    // Tasks: treat dueDate as activity date
+    tasksData.forEach((t) => {
+      if (!t.dueDate) return;
+      const d = new Date(t.dueDate);
+      if (Number.isNaN(d.getTime())) return;
+      items.push({
+        id: `task-${t.id ?? t.title}`,
+        label: `Task: ${t.title}`,
+        date: d,
+        meta: t.status === 'completed' ? 'Completed' : 'Due',
+      });
+    });
+
+    // Projects: use startDate if present
+    projects.forEach((p) => {
+      if (!p.startDate) return;
+      const parsed = parse(p.startDate, 'MMM d, yyyy', new Date());
+      if (!isValid(parsed)) return;
+      items.push({
+        id: `proj-${p.id}`,
+        label: `Project started: ${p.name}`,
+        date: parsed,
+        meta: p.status,
+      });
+    });
+
+    items.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    return items.slice(0, 5);
+  }, [projects]);
 
   if (!isMounted) {
     return <div className="p-8">Loading dashboard...</div>;
@@ -237,6 +395,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* HEADER */}
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold font-headline tracking-tight">
           Dashboard
@@ -244,12 +403,14 @@ export default function DashboardPage() {
         <p className="text-muted-foreground">
           {user?.name
             ? `Welcome back, ${user.name}. Here is your project overview.`
-            : 'Welcome Back, Guest. Here is your project overview.'}
+            : 'Welcome back. Here is your project overview.'}
         </p>
       </div>
 
+      {/* TOP METRIC CARDS */}
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        {/* Active Projects with hover list */}
+        <Card className="relative group">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
               Active Projects
@@ -264,29 +425,84 @@ export default function DashboardPage() {
               Up to date
             </p>
           </CardContent>
+
+          {/* Hover overlay listing active projects */}
+          {activeProjectsCount > 0 && (
+            <div className="pointer-events-none absolute left-2 right-2 top-full z-10 mt-2 hidden rounded-md border bg-popover p-3 text-xs shadow-md group-hover:block">
+              <div className="mb-1 font-semibold">
+                Active Projects
+              </div>
+              <ul className="space-y-1">
+                {dashboardProjects
+                  .filter((p) => p.status === 'Active')
+                  .slice(0, 4)
+                  .map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{p.name}</span>
+                      <span className="text-muted-foreground">
+                        {p.progress ?? 0}% complete
+                      </span>
+                    </li>
+                  ))}
+                {activeProjectsCount > 4 && (
+                  <li className="text-muted-foreground">
+                    +{activeProjectsCount - 4} more…
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
         </Card>
+
+        {/* Tasks Due Today */}
         <Card>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-medium">
               Tasks Due Today
             </CardTitle>
+            <Link
+              href="/tasks"
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              View All
+            </Link>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <div className="text-2xl font-bold">
               {tasksDueTodayCount}
             </div>
             {tasksDueTodayCount > 0 ? (
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <ArrowUp className="h-3 w-3 text-orange-500" />
-                Needs attention
-              </p>
+              <>
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <ArrowUp className="h-3 w-3 text-orange-500" />
+                  Needs attention today
+                </p>
+                <div className="mt-1 space-y-2 text-xs max-h-28 overflow-auto">
+                  {tasksDueToday.slice(0, 4).map((t) => (
+                    <div
+                      key={t.id ?? t.title}
+                      className="flex items-center justify-between rounded-md border px-2 py-1"
+                    >
+                      <span className="truncate">{t.title}</span>
+                      <span className="ml-2 text-[11px] text-muted-foreground">
+                        {t.projectName ?? 'General'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
             ) : (
               <p className="text-xs text-muted-foreground">
-                All caught up
+                All caught up for today.
               </p>
             )}
           </CardContent>
         </Card>
+
+        {/* Budget Utilization */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
@@ -304,8 +520,11 @@ export default function DashboardPage() {
         </Card>
       </div>
 
+      {/* MIDDLE SECTION: timeline + project status + budget overview / tasks */}
       <div className="grid gap-6 lg:grid-cols-5">
+        {/* LEFT: Project Timeline + Status */}
         <div className="lg:col-span-3 space-y-6">
+          {/* Project Timeline */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Project Timeline</CardTitle>
@@ -325,54 +544,160 @@ export default function DashboardPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[250px]">
+                    <TableHead className="w-[220px]">
                       Project
                     </TableHead>
                     <TableHead>Timeline</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
-                  {dashboardProjects.length > 0 ? (
-                    dashboardProjects.map((project) => (
-                      <TableRow key={project.id}>
-                        <TableCell>
-                          <div className="font-medium">
-                            {project.name}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {project.status}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Progress
-                              value={project.progress}
-                              className={`h-2 ${getProgressColorClass(
-                                project.progress
-                              )}`}
-                            />
-                            <span className="text-sm font-medium">
-                              {project.progress}%
-                            </span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell
-                        colSpan={2}
-                        className="h-24 text-center"
-                      >
-                        No projects yet.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
+<TableBody>
+  {dashboardProjects.length > 0 ? (
+    dashboardProjects.map((project) => {
+      const today = new Date();
+
+      // --- parse dates from project (supports multiple formats) ---
+      const startParsed = parseProjectDate(project.startDate);
+      const endParsed   = parseProjectDate(project.endDate);
+
+      // --- labels ---
+      const startLabel =
+        startParsed && isValid(startParsed)
+          ? format(startParsed, 'MM/dd/yyyy')
+          : '—';
+
+      const endLabel =
+        endParsed && isValid(endParsed)
+          ? format(endParsed, 'MM/dd/yyyy')
+          : '—';
+
+      let middleLabel = 'N/A';
+      let rightLabel  = 'N/A';
+
+      // --- timeline math (total / elapsed / remaining) ---
+      let totalDays: number | null = null;
+      let elapsedDays: number | null = null;
+      let remainingDays: number | null = null;
+
+      if (startParsed && endParsed && isValid(startParsed) && isValid(endParsed)) {
+        totalDays = Math.max(1, differenceInDays(endParsed, startParsed));
+
+        // days from start → today (clamped at 0)
+        elapsedDays = Math.max(0, differenceInDays(
+          today < startParsed ? startParsed : today,
+          startParsed,
+        ));
+
+        // days from today → end (negative means overdue)
+        remainingDays = differenceInDays(endParsed, today);
+
+        middleLabel = `Today: ${elapsedDays} day${elapsedDays === 1 ? '' : 's'}`;
+
+        if (remainingDays < 0) {
+          rightLabel = `Total: ${totalDays} · Overdue: ${Math.abs(
+            remainingDays,
+          )} day${Math.abs(remainingDays) === 1 ? '' : 's'}`;
+        } else {
+          rightLabel = `Total: ${totalDays} · Remaining: ${remainingDays} day${
+            remainingDays === 1 ? '' : 's'
+          }`;
+        }
+      }
+
+      // --- bar width ---
+      let barPercent: number;
+      if (totalDays && elapsedDays !== null) {
+        const ratio = elapsedDays / totalDays;
+        barPercent = Math.max(6, Math.min(100, ratio * 100));
+      } else {
+        // fallback to progress % if we don’t have dates
+        barPercent = Math.max(
+          6,
+          Math.min(100, project.progress ?? 0),
+        );
+      }
+
+      // --- color based on status & whether we’re past end date ---
+      let statusColor =
+        project.status === 'Active'
+          ? 'bg-sky-500'
+          : project.status === 'Planning'
+          ? 'bg-violet-500'
+          : project.status === 'On Hold'
+          ? 'bg-yellow-500'
+          : project.status === 'Completed'
+          ? 'bg-emerald-500'
+          : 'bg-slate-400';
+
+      if (startParsed && endParsed) {
+        if (today < startParsed) {
+          // not started yet
+          statusColor = 'bg-slate-400';
+        } else if (today > endParsed) {
+          // past end date → overdue
+          statusColor = 'bg-red-500';
+        } else {
+          // between start & end
+          statusColor = 'bg-sky-500';
+        }
+      }
+
+      return (
+        <TableRow key={project.id}>
+          {/* LEFT: project name + status dot */}
+          <TableCell>
+            <div className="font-medium">{project.name}</div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{project.status}</span>
+              <span className={`h-2.5 w-2.5 rounded-full ${statusColor}`} />
+            </div>
+          </TableCell>
+
+          {/* RIGHT: timeline labels + bar */}
+          <TableCell>
+            <div className="space-y-1">
+              {/* top labels: start | today & elapsed | total / remaining */}
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>{startLabel}</span>
+                <span>{middleLabel}</span>
+                <span className="text-right">{rightLabel}</span>
+              </div>
+
+              {/* bottom labels: end date on its own row (optional) */}
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span className="opacity-0">.</span>
+                <span className="text-center">End: {endLabel}</span>
+                <span className="opacity-0">.</span>
+              </div>
+
+              {/* timeline bar */}
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-full rounded-full ${statusColor}`}
+                  style={{ width: `${barPercent}%` }}
+                />
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
+      );
+    })
+  ) : (
+    <TableRow>
+      <TableCell
+        colSpan={2}
+        className="h-24 text-center text-sm text-muted-foreground"
+      >
+        No projects yet. Create a project to see it on the timeline.
+      </TableCell>
+    </TableRow>
+  )}
+</TableBody>
+
               </Table>
             </CardContent>
           </Card>
 
+          {/* Project Status donut */}
           <Card>
             <CardHeader>
               <CardTitle>Project Status</CardTitle>
@@ -380,23 +705,27 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="grid grid-cols-3 gap-4">
               <div className="space-y-1">
-                <p className="text-muted-foreground">On Schedule</p>
+                <p className="text-muted-foreground text-xs">
+                  On Schedule
+                </p>
                 <p className="text-2xl font-bold">
                   {
                     projects.filter(
                       (p) =>
                         p.status === 'Active' ||
-                        p.status === 'Planning'
+                        p.status === 'Planning',
                     ).length
                   }
                 </p>
               </div>
               <div className="space-y-1">
-                <p className="text-muted-foreground">Delayed</p>
+                <p className="text-muted-foreground text-xs">
+                  Delayed
+                </p>
                 <p className="text-2xl font-bold">
                   {
                     projects.filter(
-                      (p) => p.status === 'On Hold'
+                      (p) => p.status === 'On Hold',
                     ).length
                   }
                 </p>
@@ -426,31 +755,9 @@ export default function DashboardPage() {
           </Card>
         </div>
 
+        {/* RIGHT: Tasks, Budget overview */}
         <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Tasks Due Today</CardTitle>
-              <Link
-                href="/tasks"
-                className="text-sm font-medium hover:underline"
-              >
-                View All
-              </Link>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center justify-center text-center h-full gap-4 py-12">
-              <ClipboardList className="w-16 h-16 text-muted-foreground/50" />
-              <p className="text-muted-foreground">
-                No tasks due today
-              </p>
-              <Button asChild>
-                <Link href="/tasks">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add New Task
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-
+          {/* Tasks Due Today (secondary card removed; already above) */}
           <Card>
             <CardHeader>
               <CardTitle>Budget Overview</CardTitle>
@@ -489,8 +796,8 @@ export default function DashboardPage() {
                 </p>
                 <Progress
                   value={overallBudgetUtilization}
-                  className={`h-2 mt-1 ${getProgressColor(
-                    overallBudgetUtilization
+                  className={`h-2 mt-1 ${getBudgetUtilizationColor(
+                    overallBudgetUtilization,
                   )}`}
                 />
               </div>
@@ -504,7 +811,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
               ) : (
-                <div className="h-24" />
+                <div className="h-6" />
               )}
             </CardContent>
             <CardFooter className="justify-between">
@@ -514,7 +821,7 @@ export default function DashboardPage() {
               <Button
                 variant="ghost"
                 onClick={() =>
-                  alert('Exporting report...')
+                  alert('Exporting report (stubbed)…')
                 }
               >
                 <TrendingUp className="mr-2 h-4 w-4" /> Export
@@ -525,22 +832,73 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* BOTTOM ROW: Category tracking, Recent activity, Team */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {/* Category Budget Tracking */}
         <Card>
           <CardHeader>
             <CardTitle>Category Budget Tracking</CardTitle>
           </CardHeader>
-          <CardContent className="h-48 flex flex-col items-center justify-center text-center">
-            <DollarSign className="w-12 h-12 text-muted-foreground/50" />
-            <p className="text-muted-foreground mt-2">
-              No category budgets found
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Set up category budgets to track spending
-            </p>
+          <CardContent className="h-48 overflow-y-auto">
+            {categorySummary.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center text-center text-sm text-muted-foreground">
+                <DollarSign className="w-10 h-10 mb-2 opacity-60" />
+                <p>No category budgets found</p>
+                <p className="text-xs">
+                  Set up category budgets to track spending.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs">
+                {categorySummary.slice(0, 6).map((c) => {
+                  const pct = Math.min(
+                    150,
+                    Math.max(
+                      0,
+                      Number.isFinite(c.utilization)
+                        ? c.utilization
+                        : 0,
+                    ),
+                  );
+                  return (
+                    <div key={c.category} className="space-y-1">
+                      <div className="flex justify-between">
+                        <span className="font-medium">
+                          {c.category}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {pct.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full ${
+                            pct > 100
+                              ? 'bg-destructive'
+                              : 'bg-emerald-500'
+                          }`}
+                          style={{ width: `${Math.min(pct, 150)}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-muted-foreground">
+                        <span>
+                          Budget $
+                          {c.totalBudget.toLocaleString()}
+                        </span>
+                        <span>
+                          Spent $
+                          {c.totalSpent.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* Recent Activity */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Recent Activity</CardTitle>
@@ -549,7 +907,7 @@ export default function DashboardPage() {
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  alert('Clearing all activity...')
+                  alert('Clearing activity is not yet implemented.')
                 }
               >
                 Clear All
@@ -562,13 +920,39 @@ export default function DashboardPage() {
               </Link>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="h-48 flex items-center justify-center text-muted-foreground">
-              No recent activity.
-            </div>
+          <CardContent className="h-48 overflow-y-auto">
+            {recentActivity.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                No recent activity.
+              </div>
+            ) : (
+              <ul className="space-y-2 text-xs">
+                {recentActivity.map((a) => (
+                  <li
+                    key={a.id}
+                    className="flex flex-col rounded-md border px-3 py-2"
+                  >
+                    <div className="flex justify-between">
+                      <span className="font-medium">
+                        {a.label}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {a.date.toLocaleDateString()}
+                      </span>
+                    </div>
+                    {a.meta && (
+                      <span className="text-[11px] text-muted-foreground">
+                        {a.meta}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
 
+        {/* Team Members */}
         <Card>
           <CardHeader className="flex flex-row justify-between items-center">
             <CardTitle>Team Members</CardTitle>

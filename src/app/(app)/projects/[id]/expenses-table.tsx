@@ -50,31 +50,36 @@ type NewExpenseForm = {
 };
 
 
-
 const numberOrZero = (v: unknown): number => {
   const n = typeof v === 'number' ? v : Number(v ?? 0);
   return Number.isFinite(n) ? n : 0;
 };
 
 export function ExpensesTable({ initialData, onDataChange }: Props) {
-  // main rows
+  // --- main rows ---
   const [rows, setRows] = React.useState<Expense[]>(
     () => (initialData ?? []) as Expense[],
   );
 
-  // helper: update rows + notify parent in one place
+  // keep local rows in sync if initialData prop changes
+  React.useEffect(() => {
+    setRows((initialData ?? []) as Expense[]);
+  }, [initialData]);
+
+  // helper used by buttons / editors, ONLY updates local state
   const setRowsAndNotify = React.useCallback(
     (updater: (prev: Expense[]) => Expense[]) => {
-      setRows((prev) => {
-        const next = updater(prev);
-        if (onDataChange) {
-          onDataChange(next);
-        }
-        return next;
-      });
+      setRows((prev) => updater(prev));
     },
-    [onDataChange],
+    [],
   );
+
+  // AFTER rows change, notify parent (ProjectDetailsPage)
+  React.useEffect(() => {
+    if (onDataChange) {
+      onDataChange(rows);
+    }
+  }, [rows, onDataChange]);
 
   // controls / filters
   const [groupByCategory, setGroupByCategory] = React.useState(false);

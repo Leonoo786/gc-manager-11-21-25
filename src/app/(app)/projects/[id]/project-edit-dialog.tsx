@@ -71,6 +71,7 @@ export function ProjectEditDialog({
       : '',
   );
 
+  
   // Reset fields when dialog opens or project changes
   useEffect(() => {
     if (!open) return;
@@ -181,56 +182,49 @@ export function ProjectEditDialog({
           </div>
 
           {/* Dates + progress */}
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-1">
-              <Label htmlFor="start-date">
-                Start Date
-                <span className="ml-1 text-xs text-muted-foreground">
-                  (pick or type)
-                </span>
-              </Label>
-              <Input
-                id="start-date"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
+<div className="grid gap-4 md:grid-cols-3">
+  {/* Start Date */}
+  <div className="space-y-1">
+    <Label htmlFor="startDate">Start Date</Label>
+    <Input
+      id="startDate"
+      name="startDate"
+      type="date" // 👈 date picker
+      value={startDate}
+      onChange={(e) => setStartDate(e.target.value)}
+    />
+  </div>
 
-            <div className="space-y-1">
-              <Label htmlFor="end-date">
-                End Date
-                <span className="ml-1 text-xs text-muted-foreground">
-                  (pick or type)
-                </span>
-              </Label>
-              <Input
-                id="end-date"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
+  {/* End Date */}
+  <div className="space-y-1">
+    <Label htmlFor="endDate">End Date</Label>
+    <Input
+      id="endDate"
+      name="endDate"
+      type="date" // 👈 date picker
+      value={endDate}
+      onChange={(e) => setEndDate(e.target.value)}
+    />
+  </div>
 
-            <div className="space-y-1">
-              <Label htmlFor="progress">
-                Progress (%)
-                <span className="ml-1 text-xs text-muted-foreground">
-                  optional
-                </span>
-              </Label>
-              <Input
-                id="progress"
-                type="number"
-                min={0}
-                max={100}
-                value={progress}
-                onChange={(e) => setProgress(e.target.value)}
-                placeholder="0–100"
-              />
-            </div>
-          </div>
-        </div>
+  {/* Progress */}
+  <div className="space-y-1">
+    <Label htmlFor="progress">
+      Progress (%)
+      <span className="ml-1 text-xs text-muted-foreground">optional</span>
+    </Label>
+    <Input
+      id="progress"
+      type="number"
+      min={0}
+      max={100}
+      value={progress}
+      onChange={(e) => setProgress(e.target.value)}
+      placeholder="0–100"
+    />
+  </div>
+</div>
+
 
         <DialogFooter className="mt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)}>

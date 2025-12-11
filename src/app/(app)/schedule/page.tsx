@@ -1,20 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { useEffect, useMemo, useState } from 'react';
-import {
-  CalendarDays,
-  Clock,
-  Filter,
-  FlagTriangleRight,
-  Search,
-  ListChecks,
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  User,
-} from 'lucide-react';
-
 import {
   Card,
   CardContent,
@@ -22,8 +8,24 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card';
+// NEW – dialog + form controls
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -32,520 +34,524 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select';
+  differenceInCalendarDays,
+  isAfter,
+  isBefore,
+  isWithinInterval,
+  parseISO,
+  startOfDay,
+} from 'date-fns';
 
-import { projectsData, type Project } from '../projects/projects-data';
+type ScheduleItemStatus = 'Scheduled' | 'In Progress' | 'Completed';
+type ScheduleItemType = 'Task' | 'Milestone' | 'Meeting';
 
-const PROJECTS_STORAGE_KEY = 'projects';
-
-type NormalizedScheduleItem = {
+type ScheduleItem = {
   id: string;
-  projectId: string;
-  projectName: string;
   title: string;
-  description?: string;
-  date?: string; // ISO string or raw
-  status?: string;
-  assignedTo?: string;
+  projectName: string;
+  date: string; // ISO string, e.g. "2025-12-10"
+  status: ScheduleItemStatus;
+  assignedTo: string;
+  type: ScheduleItemType;
 };
 
-function getInitialProjects(): Project[] {
-  if (typeof window === 'undefined') {
-    return projectsData;
-  }
+// NEW – very small “project” and “vendor” shapes
+type SimpleProject = {
+  id: string;
+  name: string;
+};
+
+type SimpleVendor = {
+  id: string;
+  name: string;
+};
+
+// Try to load projects from localStorage key "projects"
+function loadProjects(): SimpleProject[] {
+  if (typeof window === 'undefined') return [];
   try {
-    const saved = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
-    if (!saved) return projectsData;
-    const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed)) {
-      return parsed as Project[];
-    }
-    return projectsData;
+    const raw = window.localStorage.getItem('projects');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as any[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((p, idx) => ({
+      id: String(p.id ?? idx),
+      name: String(p.name ?? 'Untitled Project'),
+    }));
   } catch {
-    return projectsData;
+    return [];
   }
 }
 
-function safeParseDate(raw?: string) {
-  if (!raw) return undefined;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return undefined;
-  return d;
+// Try to load vendors from localStorage key "vendors"
+function loadVendors(): SimpleVendor[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem('vendors');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as any[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((v, idx) => ({
+      id: String(v.id ?? idx),
+      name: String(v.name ?? v.vendorName ?? 'Unnamed Vendor'),
+    }));
+  } catch {
+    return [];
+  }
 }
 
-function formatDate(raw?: string) {
-  const d = safeParseDate(raw);
-  if (!d) return '—';
-  return d.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
 
-function getStatusBadge(status?: string) {
-  const value = (status ?? '').toLowerCase();
+const STORAGE_KEY = 'scheduleItems';
 
-  if (value.includes('complete') || value === 'done') {
-    return { label: status ?? 'Completed', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
-  }
-  if (value.includes('progress') || value === 'active') {
-    return { label: status ?? 'In Progress', className: 'bg-blue-50 text-blue-700 border-blue-100' };
-  }
-  if (value.includes('block')) {
-    return { label: status ?? 'Blocked', className: 'bg-rose-50 text-rose-700 border-rose-100' };
-  }
-  if (value.includes('hold')) {
-    return { label: status ?? 'On Hold', className: 'bg-amber-50 text-amber-700 border-amber-100' };
-  }
+const DEFAULT_SCHEDULE_ITEMS: ScheduleItem[] = [
+  {
+    id: 'sched-1',
+    title: 'Groundbreaking',
+    projectName: 'PowerMart',
+    date: '2025-12-15',
+    status: 'Scheduled',
+    assignedTo: 'Karim',
+    type: 'Milestone',
+  },
+  {
+    id: 'sched-2',
+    title: 'Temple 8845 Foundation Pour',
+    projectName: 'Temple 8845',
+    date: '2025-12-20',
+    status: 'Scheduled',
+    assignedTo: 'Site Superintendent',
+    type: 'Task',
+  },
+];
 
-  return { label: status ?? 'Not Started', className: 'bg-slate-50 text-slate-700 border-slate-200' };
+function loadInitialSchedule(): ScheduleItem[] {
+  if (typeof window === 'undefined') return DEFAULT_SCHEDULE_ITEMS;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_SCHEDULE_ITEMS;
+    const parsed = JSON.parse(raw) as ScheduleItem[];
+    if (!Array.isArray(parsed)) return DEFAULT_SCHEDULE_ITEMS;
+    return parsed;
+  } catch {
+    return DEFAULT_SCHEDULE_ITEMS;
+  }
 }
 
 export default function SchedulePage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [isMounted, setIsMounted] = useState(false);
+  const [isMounted, setIsMounted] = React.useState(false);
+  const [items, setItems] = React.useState<ScheduleItem[]>(DEFAULT_SCHEDULE_ITEMS);
+  const [search, setSearch] = React.useState('');
 
-  const [search, setSearch] = useState('');
-  const [projectFilter, setProjectFilter] = useState<'all' | string>('all');
-  const [statusFilter, setStatusFilter] =
-    useState<'all' | 'not-started' | 'in-progress' | 'completed' | 'blocked'>('all');
+  // NEW – dropdown data
+  const [projects, setProjects] = React.useState<SimpleProject[]>([]);
+  const [vendors, setVendors] = React.useState<SimpleVendor[]>([]);
 
-  useEffect(() => {
-    const initial = getInitialProjects();
-    setProjects(initial);
+  // NEW – dialog + form state
+  const [isAddOpen, setIsAddOpen] = React.useState(false);
+  const [formTitle, setFormTitle] = React.useState('');
+  const [formProjectId, setFormProjectId] = React.useState('');
+  const [formDate, setFormDate] = React.useState('');
+  const [formStatus, setFormStatus] =
+    React.useState<ScheduleItemStatus>('Scheduled');
+  const [formVendorId, setFormVendorId] = React.useState('');
+  const [formType, setFormType] =
+    React.useState<ScheduleItemType>('Task');
+
+
+  // mount & load from localStorage
+    React.useEffect(() => {
     setIsMounted(true);
+    if (typeof window !== 'undefined') {
+      setItems(loadInitialSchedule());
+      setProjects(loadProjects());
+      setVendors(loadVendors());
+    }
   }, []);
 
-  // Flatten all projects' scheduleData into one list
-  const scheduleItems: NormalizedScheduleItem[] = useMemo(() => {
-    const items: NormalizedScheduleItem[] = [];
 
-    projects.forEach((project) => {
-      const anyP: any = project;
-      const rawSchedule: any[] = anyP.scheduleData ?? [];
-
-      if (!Array.isArray(rawSchedule)) return;
-
-      rawSchedule.forEach((item, index) => {
-        const id = item.id?.toString() ?? `${project.id}-sched-${index}`;
-
-        const title =
-          item.title ??
-          item.name ??
-          item.task ??
-          `Schedule item #${index + 1}`;
-
-        const description =
-          item.description ??
-          item.notes ??
-          item.detail ??
-          undefined;
-
-        const date =
-          item.date ??
-          item.dueDate ??
-          item.startDate ??
-          item.endDate ??
-          undefined;
-
-        const status =
-          item.status ??
-          item.state ??
-          item.phase ??
-          undefined;
-
-        const assignedTo =
-          item.assignedTo ??
-          item.owner ??
-          item.assignee ??
-          undefined;
-
-        items.push({
-          id,
-          projectId: project.id,
-          projectName: project.name,
-          title,
-          description,
-          date,
-          status,
-          assignedTo,
-        });
-      });
-    });
-
-    // Sort by date (earliest first), items without date go to bottom
-    return items.sort((a, b) => {
-      const da = safeParseDate(a.date);
-      const db = safeParseDate(b.date);
-
-      if (!da && !db) return 0;
-      if (!da) return 1;
-      if (!db) return -1;
-      return da.getTime() - db.getTime();
-    });
-  }, [projects]);
-
-  // Summary metrics
-  const { upcomingCount, thisWeekCount, overdueCount } = useMemo(() => {
-    if (!scheduleItems.length) {
-      return { upcomingCount: 0, thisWeekCount: 0, overdueCount: 0 };
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const endOfWeek = new Date(today);
-    endOfWeek.setDate(endOfWeek.getDate() + 7);
-
-    let upcoming = 0;
-    let thisWeek = 0;
-    let overdue = 0;
-
-    scheduleItems.forEach((item) => {
-      const d = safeParseDate(item.date);
-      if (!d) return;
-
-      d.setHours(0, 0, 0, 0);
-
-      if (d.getTime() > today.getTime()) {
-        upcoming++;
-      }
-      if (d.getTime() >= today.getTime() && d.getTime() <= endOfWeek.getTime()) {
-        thisWeek++;
-      }
-      if (d.getTime() < today.getTime()) {
-        const statusLower = (item.status ?? '').toLowerCase();
-        if (!statusLower.includes('complete')) {
-          overdue++;
-        }
-      }
-    });
-
-    return { upcomingCount: upcoming, thisWeekCount: thisWeek, overdueCount: overdue };
-  }, [scheduleItems]);
-
-  // Filter + search
-  const filteredSchedule = useMemo(() => {
-    const term = search.toLowerCase();
-
-    return scheduleItems.filter((item) => {
-      // project filter
-      if (projectFilter !== 'all' && item.projectId !== projectFilter) {
-        return false;
-      }
-
-      // status filter
-      const statusLower = (item.status ?? '').toLowerCase();
-      if (statusFilter === 'not-started') {
-        if (
-          statusLower.includes('progress') ||
-          statusLower.includes('complete') ||
-          statusLower.includes('block') ||
-          statusLower.includes('hold')
-        ) {
-          return false;
-        }
-      } else if (statusFilter === 'in-progress') {
-        if (!statusLower.includes('progress') && statusLower !== 'active') {
-          return false;
-        }
-      } else if (statusFilter === 'completed') {
-        if (!statusLower.includes('complete') && statusLower !== 'done') {
-          return false;
-        }
-      } else if (statusFilter === 'blocked') {
-        if (!statusLower.includes('block')) {
-          return false;
-        }
-      }
-
-      if (!term) return true;
-
-      const title = item.title.toLowerCase();
-      const projectName = item.projectName.toLowerCase();
-      const description = (item.description ?? '').toLowerCase();
-      const assignedTo = (item.assignedTo ?? '').toLowerCase();
-      const status = (item.status ?? '').toLowerCase();
-
-      return (
-        title.includes(term) ||
-        projectName.includes(term) ||
-        description.includes(term) ||
-        assignedTo.includes(term) ||
-        status.includes(term)
-      );
-    });
-  }, [scheduleItems, search, projectFilter, statusFilter]);
+  // persist on change
+  React.useEffect(() => {
+    if (!isMounted || typeof window === 'undefined') return;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  }, [items, isMounted]);
 
   if (!isMounted) {
-    return (
-      <div className="p-8 flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading schedule…
-      </div>
-    );
+    return <div className="p-6 text-sm text-muted-foreground">Loading schedule…</div>;
   }
 
+  const today = startOfDay(new Date());
+
+  const upcomingCount = items.filter((item) => {
+    const d = parseISO(item.date);
+    return isAfter(d, today);
+  }).length;
+
+  const thisWeekCount = items.filter((item) => {
+    const d = parseISO(item.date);
+    return isWithinInterval(d, {
+      start: today,
+      end: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000),
+    });
+  }).length;
+
+  const overdueCount = items.filter((item) => {
+    const d = parseISO(item.date);
+    return isBefore(d, today) && item.status !== 'Completed';
+  }).length;
+
+  const filteredItems = items.filter((item) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      item.title.toLowerCase().includes(q) ||
+      item.projectName.toLowerCase().includes(q) ||
+      item.assignedTo.toLowerCase().includes(q)
+    );
+  });
+
+  // --- actions ---
+
+    // NEW – commit the form into a schedule item
+  const handleSaveNewScheduleItem = () => {
+    const today = startOfDay(new Date());
+    const todayIso = today.toISOString().slice(0, 10);
+
+    if (!formTitle.trim()) {
+      window.alert('Please enter a Task / Milestone name.');
+      return;
+    }
+
+    const project =
+      projects.find((p) => p.id === formProjectId) ?? null;
+    const vendor =
+      vendors.find((v) => v.id === formVendorId) ?? null;
+
+    const newItem: ScheduleItem = {
+      id: `sched-${Date.now()}`,
+      title: formTitle.trim(),
+      projectName: project?.name ?? 'Unassigned',
+      date: (formDate || todayIso).trim(),
+      status: formStatus,
+      assignedTo: vendor?.name ?? 'Unassigned',
+      type: formType,
+    };
+
+    setItems((prev) => [...prev, newItem]);
+
+    // reset & close
+    setFormTitle('');
+    setFormProjectId('');
+    setFormDate('');
+    setFormStatus('Scheduled');
+    setFormVendorId('');
+    setFormType('Task');
+    setIsAddOpen(false);
+  };
+
+
+  const handleDeleteScheduleItem = (id: string) => {
+    if (!window.confirm('Delete this schedule item?')) return;
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  };
+
+  const handleEditScheduleItem = (item: ScheduleItem) => {
+    const title = window.prompt('Title:', item.title);
+    if (!title) return;
+
+    const projectName = window.prompt('Project name:', item.projectName) || item.projectName;
+    const dateInput =
+      window.prompt('Date (YYYY-MM-DD):', item.date) || item.date;
+    const assignedTo =
+      window.prompt('Assigned to:', item.assignedTo) || item.assignedTo;
+    const statusInput =
+      window.prompt(
+        'Status (Scheduled, In Progress, Completed):',
+        item.status,
+      ) || item.status;
+    const normalizedStatus = (statusInput.trim() as ScheduleItemStatus) || item.status;
+
+    const updated: ScheduleItem = {
+      ...item,
+      title: title.trim(),
+      projectName: projectName.trim(),
+      date: dateInput.trim(),
+      assignedTo: assignedTo.trim(),
+      status: normalizedStatus,
+    };
+
+    setItems((prev) => prev.map((i) => (i.id === item.id ? updated : i)));
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      const d = parseISO(iso);
+      const diff = differenceInCalendarDays(d, today);
+      return `${iso}  ·  ${diff >= 0 ? `${diff} days from now` : `${Math.abs(diff)} days ago`}`;
+    } catch {
+      return iso;
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-bold font-headline tracking-tight">
-            Schedule
-          </h1>
-          <p className="text-muted-foreground">
+    <div className="space-y-6">
+      {/* Header with Add button */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Schedule</h1>
+          <p className="text-sm text-muted-foreground">
             See upcoming milestones and tasks across all projects.
           </p>
         </div>
+
+        <Button
+          size="sm"
+          className="mt-1"
+          onClick={() => setIsAddOpen(true)}
+        >
+          + Add Schedule Item
+        </Button>
+
       </div>
 
-      {/* Summary cards */}
+      {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-medium">
-                Upcoming Items
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Any item scheduled after today
-              </CardDescription>
-            </div>
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Upcoming Items</CardTitle>
+            <CardDescription>Any item scheduled after today</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{upcomingCount}</div>
-          </CardContent>
+          <CardContent className="text-3xl font-semibold">{upcomingCount}</CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-medium">
-                This Week
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Items scheduled in the next 7 days
-              </CardDescription>
-            </div>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">This Week</CardTitle>
+            <CardDescription>Items scheduled in the next 7 days</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{thisWeekCount}</div>
-          </CardContent>
+          <CardContent className="text-3xl font-semibold">{thisWeekCount}</CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-medium">
-                Overdue
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Past due and not completed
-              </CardDescription>
-            </div>
-            <AlertTriangle className="h-4 w-4 text-destructive" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-red-600">Overdue</CardTitle>
+            <CardDescription>Past due and not completed</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-destructive">
-              {overdueCount}
-            </div>
+          <CardContent className="text-3xl font-semibold text-red-600">
+            {overdueCount}
           </CardContent>
         </Card>
       </div>
 
-      {/* Filters + table */}
+      {/* Global schedule table */}
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                Global Schedule
-              </CardTitle>
-              <CardDescription>
-                Filter by project or status to focus on what matters today.
-              </CardDescription>
-            </div>
-            <div className="hidden md:flex items-center gap-2 text-xs text-muted-foreground">
-              <Filter className="h-3 w-3" />
-              Filters
-            </div>
+        <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <CardTitle className="text-base">Global Schedule</CardTitle>
+            <CardDescription>
+              Filter by project or status to focus on what matters today.
+            </CardDescription>
+          </div>
+          <div className="flex w-full items-center gap-2 md:w-auto">
+            <Input
+              placeholder="Search by task, project, status, or assignee..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="max-w-xs"
+            />
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Search & filters row */}
-          <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-            <div className="relative max-w-md w-full">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Task / Milestone</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Assigned To</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredItems.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                    No schedule items match your filters.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredItems.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="font-medium">{item.title}</TableCell>
+                    <TableCell>{item.projectName}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {formatDate(item.date)}
+                    </TableCell>
+                    <TableCell>{item.status}</TableCell>
+                    <TableCell>{item.assignedTo}</TableCell>
+                    <TableCell>{item.type}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="inline-flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleEditScheduleItem(item)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-600 hover:text-red-700"
+                          onClick={() => handleDeleteScheduleItem(item.id)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+            {/* NEW – Add Schedule Item dialog */}
+      <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Schedule Item</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Task / Milestone */}
+            <div className="space-y-1">
+              <Label htmlFor="sched-title">Task / Milestone</Label>
               <Input
-                placeholder="Search by task, project, status, or assignee..."
-                className="h-9 pl-9 text-sm"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                id="sched-title"
+                placeholder="e.g., Foundation pour"
+                value={formTitle}
+                onChange={(e) => setFormTitle(e.target.value)}
               />
             </div>
 
-            <div className="flex flex-wrap gap-2 md:justify-end">
+            {/* Project dropdown */}
+            <div className="space-y-1">
+              <Label>Project</Label>
               <Select
-                value={projectFilter}
-                onValueChange={(val) => setProjectFilter(val as typeof projectFilter)}
+                value={formProjectId}
+                onValueChange={setFormProjectId}
               >
-                <SelectTrigger className="h-9 w-[200px] text-xs">
-                  <SelectValue placeholder="All projects" />
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a project" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Projects</SelectItem>
-                  {projects.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
+                  {projects.length === 0 ? (
+                    <SelectItem value="__none">No projects found</SelectItem>
+                  ) : (
+                    projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
+            </div>
 
+            {/* Date */}
+            <div className="space-y-1">
+              <Label htmlFor="sched-date">Date</Label>
+              <Input
+                id="sched-date"
+                type="date"
+                value={formDate}
+                onChange={(e) => setFormDate(e.target.value)}
+              />
+            </div>
+
+            {/* Status */}
+            <div className="space-y-1">
+              <Label>Status</Label>
               <Select
-                value={statusFilter}
-                onValueChange={(val) =>
-                  setStatusFilter(val as typeof statusFilter)
+                value={formStatus}
+                onValueChange={(v) =>
+                  setFormStatus(v as ScheduleItemStatus)
                 }
               >
-                <SelectTrigger className="h-9 w-[180px] text-xs">
-                  <SelectValue placeholder="Status" />
+                <SelectTrigger>
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="not-started">Not Started</SelectItem>
-                  <SelectItem value="in-progress">In Progress</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="blocked">Blocked</SelectItem>
+                  <SelectItem value="Scheduled">Scheduled</SelectItem>
+                  <SelectItem value="In Progress">In Progress</SelectItem>
+                  <SelectItem value="Completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Assigned To – vendors */}
+            <div className="space-y-1">
+              <Label>Assigned To (Vendor)</Label>
+              <Select
+                value={formVendorId}
+                onValueChange={setFormVendorId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a vendor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {vendors.length === 0 ? (
+                    <SelectItem value="__none">No vendors found</SelectItem>
+                  ) : (
+                    vendors.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Type */}
+            <div className="space-y-1">
+              <Label>Type</Label>
+              <Select
+                value={formType}
+                onValueChange={(v) =>
+                  setFormType(v as ScheduleItemType)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Task">Task</SelectItem>
+                  <SelectItem value="Milestone">Milestone</SelectItem>
+                  <SelectItem value="Meeting">Meeting</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          {/* Table */}
-          <div className="rounded-md border overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[26%]">Task / Milestone</TableHead>
-                  <TableHead className="w-[20%]">Project</TableHead>
-                  <TableHead className="w-[14%]">Date</TableHead>
-                  <TableHead className="w-[14%]">Status</TableHead>
-                  <TableHead className="w-[16%]">Assigned To</TableHead>
-                  <TableHead className="w-[10%]">Type</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredSchedule.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="h-20 text-center text-muted-foreground text-sm"
-                    >
-                      No schedule items match your filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredSchedule.map((item, index) => {
-                    const parsedDate = safeParseDate(item.date);
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsAddOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveNewScheduleItem}>
+              Save Item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-                    let dateColor = 'text-muted-foreground';
-                    let icon: React.ReactNode = <ListChecks className="h-3 w-3" />;
-
-                    if (parsedDate) {
-                      const time = parsedDate.getTime();
-                      if (time < today.getTime()) {
-                        const statusLower = (item.status ?? '').toLowerCase();
-                        if (!statusLower.includes('complete')) {
-                          dateColor = 'text-destructive';
-                          icon = <AlertTriangle className="h-3 w-3 text-destructive" />;
-                        }
-                      } else if (time === today.getTime()) {
-                        dateColor = 'text-amber-600';
-                        icon = <FlagTriangleRight className="h-3 w-3 text-amber-600" />;
-                      } else {
-                        dateColor = 'text-emerald-600';
-                        icon = <CheckCircle2 className="h-3 w-3 text-emerald-600" />;
-                      }
-                    }
-
-                    const statusBadge = getStatusBadge(item.status);
-
-                    return (
-                      <TableRow key={item.id ?? `schedule-${index}`}>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <span className="font-medium text-sm">
-                              {item.title}
-                            </span>
-                            {item.description && (
-                              <span className="text-xs text-muted-foreground line-clamp-1">
-                                {item.description}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.projectName}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          <div className={`inline-flex items-center gap-1 text-xs ${dateColor}`}>
-                            {icon}
-                            {formatDate(item.date)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={`text-[11px] px-2 py-0.5 ${statusBadge.className}`}
-                          >
-                            {statusBadge.label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.assignedTo ? (
-                            <span className="inline-flex items-center gap-1 text-xs">
-                              <User className="h-3 w-3 text-muted-foreground" />
-                              {item.assignedTo}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              —
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {/* Very light "type" guess just for visual variety */}
-                          {item.title.toLowerCase().includes('pour')
-                            ? 'Concrete'
-                            : item.title.toLowerCase().includes('inspection')
-                            ? 'Inspection'
-                            : item.title.toLowerCase().includes('submittal')
-                            ? 'Submittal'
-                            : 'General'}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

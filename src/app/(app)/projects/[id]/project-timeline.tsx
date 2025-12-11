@@ -35,31 +35,85 @@ export function ProjectTimeline({
   const start = parseDate(project.startDate);
   const end = parseDate(project.endDate);
 
-  const { totalDays, daysPassed, daysLeft, progressPctBySchedule } =
+  /**
+   * Schedule metrics, mirroring the dashboard timeline logic
+   * - totalDays: planned duration (start → end)
+   * - daysPassed: days from start → today (can exceed totalDays)
+   * - daysLeft: days remaining until end (0 if overdue)
+   * - overdueDays: days past end (0 if still on time)
+   * - progressPctBySchedule: 0–100%, clamped for bar width
+   */
+  const { totalDays, daysPassed, daysLeft, overdueDays, progressPctBySchedule } =
     useMemo(() => {
       if (!start || !end) {
-        return { totalDays: 0, daysPassed: 0, daysLeft: 0, progressPctBySchedule: 0 };
+        return {
+          totalDays: 0,
+          daysPassed: 0,
+          daysLeft: 0,
+          overdueDays: 0,
+          progressPctBySchedule: 0,
+        };
       }
+
       const now = new Date();
+      const dayMs = 1000 * 60 * 60 * 24;
+
       const msTotal = end.getTime() - start.getTime();
-      const msPassed = now.getTime() - start.getTime();
-      const total = Math.max(0, Math.round(msTotal / (1000 * 60 * 60 * 24)));
-      const passed = Math.min(total, Math.max(0, Math.round(msPassed / (1000 * 60 * 60 * 24))));
-      const left = Math.max(0, total - passed);
-      const pct = total > 0 ? (passed / total) * 100 : 0;
-      return { totalDays: total, daysPassed: passed, daysLeft: left, progressPctBySchedule: pct };
+      const msSinceStart = now.getTime() - start.getTime();
+
+      const total = Math.max(0, Math.round(msTotal / dayMs));
+
+      // Raw days from start until today (can be > total if overdue)
+      const passedRaw = Math.max(0, Math.round(msSinceStart / dayMs));
+
+      // For the bar we clamp to the total so it never exceeds 100%
+      const passedClamped = total > 0 ? Math.min(passedRaw, total) : 0;
+
+      const overdue = total > 0 ? Math.max(0, passedRaw - total) : 0;
+      const remaining = total > 0 ? Math.max(0, total - passedRaw) : 0;
+
+      const pct =
+        total > 0 ? (passedClamped / total) * 100 : 0;
+
+      return {
+        totalDays: total,
+        daysPassed: passedRaw,
+        daysLeft: remaining,
+        overdueDays: overdue,
+        progressPctBySchedule: pct,
+      };
     }, [start, end]);
 
   const displayTotalBudget = committedTotal > 0 ? committedTotal : totalBudget;
 
   const potentialProfit = finalBidFromBudget - displayTotalBudget; // Customer Bid - Our Cost
-  const actualProfit = finalBidFromBudget - totalSpent;           // Customer Bid - Current Cost
+  const actualProfit = finalBidFromBudget - totalSpent; // Customer Bid - Current Cost
 
   const progressBudgetPct =
     displayTotalBudget > 0 ? (totalSpent / displayTotalBudget) * 100 : 0;
 
   const profitColor =
     actualProfit > 0 ? 'text-emerald-600' : actualProfit < 0 ? 'text-red-600' : '';
+
+  // --- NEW: bar color, matching dashboard logic ---
+  const barColor =
+    overdueDays > 0
+      ? 'bg-red-500'
+      : project.status === 'Completed'
+      ? 'bg-emerald-500'
+      : 'bg-sky-500';
+
+  // Date labels in MM/DD/YYYY
+  const startLabel = start ? start.toLocaleDateString('en-US') : 'Start date not set';
+  const endLabel = end ? end.toLocaleDateString('en-US') : 'End date not set';
+
+  // Right-hand label with total + remaining/overdue
+  const rightLabel =
+    totalDays > 0
+      ? overdueDays > 0
+        ? `Total: ${totalDays} – Overdue: ${overdueDays} days`
+        : `Total: ${totalDays} – Remaining: ${daysLeft} days`
+      : 'Schedule not set';
 
   return (
     <div className="space-y-4">
@@ -125,6 +179,7 @@ export function ProjectTimeline({
 
       {/* Schedule bar */}
       <div className="rounded-lg border bg-card p-4">
+        {/* Header line: schedule summary + manual progress */}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <div>
             <span className="font-medium">Schedule &amp; Status</span>
@@ -135,21 +190,27 @@ export function ProjectTimeline({
               </>
             )}
           </div>
-          <div>
-            Progress: {project.progress ?? 0}% complete
-          </div>
+          <div>Progress: {project.progress ?? 0}% complete</div>
         </div>
 
+        {/* Labels above the bar (like dashboard timeline) */}
+        <div className="mb-1 flex justify-between text-[11px] text-muted-foreground">
+          <span>{startLabel}</span>
+          <span>Today: {daysPassed} days</span>
+          <span className="text-right">{rightLabel}</span>
+        </div>
+
+        {/* Colored schedule bar */}
         <div className="relative h-2 overflow-hidden rounded-full bg-muted">
           <div
-            className="absolute inset-y-0 left-0 bg-primary"
+            className={`absolute inset-y-0 left-0 ${barColor}`}
             style={{ width: `${progressPctBySchedule.toFixed(1)}%` }}
           />
         </div>
 
-        <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-          <div>{start ? start.toLocaleDateString() : 'Start date not set'}</div>
-          <div>{end ? end.toLocaleDateString() : 'End date not set'}</div>
+        {/* End date label below the bar */}
+        <div className="mt-2 flex justify-center text-xs text-muted-foreground">
+          <span>End: {endLabel}</span>
         </div>
       </div>
     </div>
