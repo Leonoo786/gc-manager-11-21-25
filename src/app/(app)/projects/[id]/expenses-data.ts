@@ -11,6 +11,7 @@ export type Expense = {
   description: string;
   paymentMethod?: string; // e.g. "Check", "CC", "Bank ACH", "to be paid"
   reference?: string;     // check number or other reference
+  invoiceNumber?: string;
   invoice?: string;       // this corresponds to "Invoice #"
   amount: number;         // numeric dollar amount
 };

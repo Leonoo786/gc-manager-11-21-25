@@ -1,9 +1,7 @@
 'use client';
 
 import * as React from 'react';
-
 import * as XLSX from 'xlsx';
-
 
 import { Button } from '@/components/ui/button';
 import {
@@ -38,6 +36,18 @@ type Props = {
   onDataChange?: (rows: Expense[]) => void;
 };
 
+type SortKey =
+  | 'date'
+  | 'category'
+  | 'vendor'
+  | 'description'
+  | 'paymentMethod'
+  | 'reference'
+  | 'invoiceNumber'
+  | 'amount';
+
+type SortDir = 'asc' | 'desc';
+
 type NewExpenseForm = {
   date: string;
   vendor: string;
@@ -49,6 +59,149 @@ type NewExpenseForm = {
   reference: string;
 };
 
+function toNumberSafe(v: unknown): number {
+  const n =
+    typeof v === 'number'
+      ? v
+      : Number(String(v ?? '').replace(/[$,]/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Accepts: ISO string, any string date, Excel serial like 45879
+function toDateMs(v: unknown): number {
+  if (v == null) return 0;
+
+  // Excel serial number (most common: 30k–60k)
+  const n = Number(v);
+  if (!Number.isNaN(n) && n > 30000 && n < 60000) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    return excelEpoch + n * 86400000;
+  }
+
+  const s = String(v).trim();
+  if (!s) return 0;
+
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function compareText(a: unknown, b: unknown) {
+  return String(a ?? '').localeCompare(String(b ?? ''), undefined, {
+    sensitivity: 'base',
+  });
+}
+
+function excelSerialToISO(serial: number) {
+  const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+  const ms = serial * 24 * 60 * 60 * 1000;
+  const d = new Date(excelEpoch.getTime() + ms);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function normalizeExpenseDate(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value > 30000 && value < 60000) return excelSerialToISO(value);
+    return String(value);
+  }
+  const s = String(value).trim();
+  if (!s) return '';
+  const n = Number(s);
+  if (!Number.isNaN(n) && n > 30000 && n < 60000) return excelSerialToISO(n);
+
+  // If it's already "YYYY-MM-DD", convert to "MM-DD-YYYY"
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[2]}-${m[3]}-${m[1]}`; // MM-DD-YYYY
+
+  return s;
+}
+
+function displayExpenseDate(value: unknown): string {
+  const iso = normalizeExpenseDate(value); // returns YYYY-MM-DD (or best effort)
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[2]}-${m[3]}-${m[1]}`; // MM-DD-YYYY
+  return iso || '-';
+}
+
+
+function SortHeader({
+  label,
+  sortKey,
+  kind,
+  sort,
+  setSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  kind: 'text' | 'date' | 'amount';
+  sort: { key: SortKey; dir: SortDir } | null;
+  setSort: React.Dispatch<
+    React.SetStateAction<{ key: SortKey; dir: SortDir } | null>
+  >;
+}) {
+  const isActive = sort?.key === sortKey;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="h-7 px-2 text-xs">
+          {label}
+          {isActive ? (sort?.dir === 'asc' ? ' ↑' : ' ↓') : ''}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {kind === 'text' && (
+          <>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'asc' })}
+            >
+              A → Z
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'desc' })}
+            >
+              Z → A
+            </DropdownMenuItem>
+          </>
+        )}
+
+        {kind === 'date' && (
+          <>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'asc' })}
+            >
+              Older → Newer
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'desc' })}
+            >
+              Newer → Older
+            </DropdownMenuItem>
+          </>
+        )}
+
+        {kind === 'amount' && (
+          <>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'asc' })}
+            >
+              Small → Large
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => setSort({ key: sortKey, dir: 'desc' })}
+            >
+              Large → Small
+            </DropdownMenuItem>
+          </>
+        )}
+
+        <DropdownMenuItem onClick={() => setSort(null)}>
+          Clear Sort
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 const numberOrZero = (v: unknown): number => {
   const n = typeof v === 'number' ? v : Number(v ?? 0);
@@ -60,14 +213,14 @@ export function ExpensesTable({ initialData, onDataChange }: Props) {
   const [rows, setRows] = React.useState<Expense[]>(
     () => (initialData ?? []) as Expense[],
   );
-const syncingFromParentRef = React.useRef(false);
+
+  const syncingFromParentRef = React.useRef(false);
 
   // keep local rows in sync if initialData prop changes
   React.useEffect(() => {
-  syncingFromParentRef.current = true;
-  setRows((initialData ?? []) as Expense[]);
-}, [initialData]);
-
+    syncingFromParentRef.current = true;
+    setRows((initialData ?? []) as Expense[]);
+  }, [initialData]);
 
   // helper used by buttons / editors, ONLY updates local state
   const setRowsAndNotify = React.useCallback(
@@ -78,21 +231,24 @@ const syncingFromParentRef = React.useRef(false);
   );
 
   // AFTER rows change, notify parent (ProjectDetailsPage)
- React.useEffect(() => {
-  // If rows were just copied from parent initialData, don't echo back
-  if (syncingFromParentRef.current) {
-    syncingFromParentRef.current = false;
-    return;
-  }
-  onDataChange?.(rows);
-}, [rows, onDataChange]);
-
+  React.useEffect(() => {
+    if (syncingFromParentRef.current) {
+      syncingFromParentRef.current = false;
+      return;
+    }
+    onDataChange?.(rows);
+  }, [rows, onDataChange]);
 
   // controls / filters
   const [groupByCategory, setGroupByCategory] = React.useState(false);
   const [vendorFilter, setVendorFilter] = React.useState<string>('All Vendors');
   const [categoryFilter, setCategoryFilter] =
     React.useState<string>('All Categories');
+
+  // sorting (MUST be inside component)
+  const [sort, setSort] = React.useState<{ key: SortKey; dir: SortDir } | null>(
+    null,
+  );
 
   // external lists from other pages (Vendors + Budget Categories)
   const [externalVendors, setExternalVendors] = React.useState<string[]>([]);
@@ -126,7 +282,6 @@ const syncingFromParentRef = React.useRef(false);
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Vendors (from /vendors page)
     try {
       const savedVendors = window.localStorage.getItem('vendors');
       if (savedVendors) {
@@ -146,17 +301,12 @@ const syncingFromParentRef = React.useRef(false);
       console.error('Failed to read vendors from localStorage', err);
     }
 
-    // Budget categories (from /budget-categories page)
     try {
       const savedCats = window.localStorage.getItem('budgetCategories');
       if (savedCats) {
         const parsed = JSON.parse(savedCats);
         const names = Array.isArray(parsed)
-          ? parsed
-              .map((c: any) =>
-                (c.name ?? c.category ?? '').toString().trim(),
-              )
-              .filter(Boolean)
+          ? parsed.map((c: any) => (c.name ?? c.category ?? '').toString().trim()).filter(Boolean)
           : [];
         setExternalCategories(Array.from(new Set(names)));
       }
@@ -200,33 +350,52 @@ const syncingFromParentRef = React.useRef(false);
   const filteredRows = React.useMemo(
     () =>
       rows.filter((r) => {
-        if (vendorFilter !== 'All Vendors' && r.vendor !== vendorFilter) {
+        if (vendorFilter !== 'All Vendors' && r.vendor !== vendorFilter)
           return false;
-        }
         if (
           categoryFilter !== 'All Categories' &&
           r.category !== categoryFilter
-        ) {
+        )
           return false;
-        }
         return true;
       }),
     [rows, vendorFilter, categoryFilter],
   );
 
+  // Sorting applies to the filtered rows (NOT raw rows)
+  const visibleRows = React.useMemo(() => {
+    let list = [...filteredRows];
+
+    if (sort) {
+      const { key, dir } = sort;
+      const mul = dir === 'asc' ? 1 : -1;
+
+      list.sort((ra, rb) => {
+        const a = (ra as any)[key];
+        const b = (rb as any)[key];
+
+        if (key === 'date') return mul * (toDateMs(a) - toDateMs(b));
+        if (key === 'amount') return mul * (toNumberSafe(a) - toNumberSafe(b));
+
+        return mul * compareText(a, b);
+      });
+    }
+
+    return list;
+  }, [filteredRows, sort]);
+
   const totalAmount = React.useMemo(
-    () =>
-      filteredRows.reduce((sum, r) => sum + numberOrZero(r.amount), 0),
-    [filteredRows],
+    () => visibleRows.reduce((sum, r) => sum + numberOrZero(r.amount), 0),
+    [visibleRows],
   );
 
-  // grouped view
+  // grouped view uses visibleRows so it respects sort/filter
   const groupedRows = React.useMemo(() => {
     if (!groupByCategory) return null;
 
     const groups = new Map<string, { total: number; rows: Expense[] }>();
 
-    for (const r of filteredRows) {
+    for (const r of visibleRows) {
       const key = (r.category || 'Uncategorized').toString();
       const entry = groups.get(key) ?? { total: 0, rows: [] };
       entry.rows.push(r);
@@ -234,10 +403,8 @@ const syncingFromParentRef = React.useRef(false);
       groups.set(key, entry);
     }
 
-    return Array.from(groups.entries()).sort(([a], [b]) =>
-      a.localeCompare(b),
-    );
-  }, [filteredRows, groupByCategory]);
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [visibleRows, groupByCategory]);
 
   // ─────────────────────────────────────────────
   // Helpers
@@ -265,95 +432,78 @@ const syncingFromParentRef = React.useRef(false);
   };
 
   const handleFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  const reader = new FileReader();
+    const reader = new FileReader();
 
-  reader.onload = (event) => {
-    try {
-      const data = event.target?.result;
-      if (!data) return;
+    reader.onload = (event) => {
+      try {
+        const data = event.target?.result;
+        if (!data) return;
 
-      // Read workbook
-      const workbook = XLSX.read(data, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
 
-      // Convert to JSON rows (keys from header row)
-      const json: any[] = XLSX.utils.sheet_to_json(worksheet, {
-        defval: '',
-      });
+        const json: any[] = XLSX.utils.sheet_to_json(worksheet, {
+          defval: '',
+        });
 
-      const imported: Expense[] = json.map((row, index) => {
-        // Column names must match your header row
-        const date = row['Date'] || row['date'] || '';
-        const category = row['Category'] || row['category'] || '';
-        const vendor = row['Vendor'] || row['vendor'] || '';
-        const description =
-          row['Description'] || row['description'] || '';
-        const paymentMethod =
-          row['Payment Method'] ||
-          row['PaymentMethod'] ||
-          row['paymentMethod'] ||
-          '';
-        const reference = row['Reference'] || row['reference'] || '';
-        const invoiceNumber =
-          row['Invoice #'] ||
-          row['Invoice#'] ||
-          row['Invoice'] ||
-          row['invoiceNumber'] ||
-          '';
-        const amountRaw =
-          row['Amount'] || row['amount'] || row['AMOUNT'] || 0;
+        const imported: Expense[] = json.map((row, index) => {
+          const dateRaw = row['Date'] || row['date'] || '';
+          const category = row['Category'] || row['category'] || '';
+          const vendor = row['Vendor'] || row['vendor'] || '';
+          const description = row['Description'] || row['description'] || '';
+          const paymentMethod =
+            row['Payment Method'] ||
+            row['PaymentMethod'] ||
+            row['paymentMethod'] ||
+            '';
+          const reference = row['Reference'] || row['reference'] || '';
+          const invoiceNumber =
+            row['Invoice #'] ||
+            row['Invoice#'] ||
+            row['Invoice'] ||
+            row['invoiceNumber'] ||
+            '';
+          const amountRaw = row['Amount'] || row['amount'] || row['AMOUNT'] || 0;
 
-        const amountNum =
-          typeof amountRaw === 'string'
-            ? Number(
-                amountRaw
-                  .replace(/[\$,]/g, '')
-                  .trim(),
-              ) || 0
-            : Number(amountRaw) || 0;
+          const amountNum =
+            typeof amountRaw === 'string'
+              ? Number(amountRaw.replace(/[\$,]/g, '').trim()) || 0
+              : Number(amountRaw) || 0;
 
-        const id =
-          typeof crypto !== 'undefined' && 'randomUUID' in crypto
-            ? crypto.randomUUID()
-            : `imp-${Date.now()}-${index}`;
+          const id =
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+              ? crypto.randomUUID()
+              : `imp-${Date.now()}-${index}`;
 
-        return {
-          id,
-          date: date?.toString() ?? '',
-          category: category?.toString() ?? '',
-          vendor: vendor?.toString() ?? '',
-          description: description?.toString() ?? '',
-          paymentMethod: paymentMethod?.toString() ?? '',
-          reference: reference?.toString() ?? '',
-          invoiceNumber: invoiceNumber?.toString() ?? '',
-          amount: amountNum,
-        } as Expense;
-      });
+          return {
+            id,
+            date: normalizeExpenseDate(dateRaw),
+            category: category?.toString() ?? '',
+            vendor: vendor?.toString() ?? '',
+            description: description?.toString() ?? '',
+            paymentMethod: paymentMethod?.toString() ?? '',
+            reference: reference?.toString() ?? '',
+            invoiceNumber: invoiceNumber?.toString() ?? '',
+            amount: amountNum,
+          } as Expense;
+        });
 
-      // Append to existing rows and notify parent
-      setRowsAndNotify((prev) => [...prev, ...imported]);
-    } catch (err) {
-      console.error('Failed to parse XLSX file:', err);
-      alert('Could not parse this Excel file. Check column headers.');
-    }
+        setRowsAndNotify((prev) => [...prev, ...imported]);
+      } catch (err) {
+        console.error('Failed to parse XLSX file:', err);
+        alert('Could not parse this Excel file. Check column headers.');
+      }
+    };
+
+    reader.onerror = () => alert('Error reading file.');
+    reader.readAsArrayBuffer(file);
+
+    e.target.value = '';
   };
-
-  reader.onerror = () => {
-    alert('Error reading file.');
-  };
-
-  reader.readAsArrayBuffer(file);
-
-  // Allow choosing the same file again
-  e.target.value = '';
-};
-
-
-
 
   const handleOpenAddDialog = () => {
     setNewExpense({
@@ -398,14 +548,10 @@ const syncingFromParentRef = React.useRef(false);
     setIsAddDialogOpen(false);
   };
 
-  // select-all checkbox helper
+  // select-all checkbox helper (uses visibleRows)
   const allVisibleSelected =
-    filteredRows.length > 0 &&
-    filteredRows.every((r) => selectedIds.includes(r.id));
+    visibleRows.length > 0 && visibleRows.every((r) => selectedIds.includes(r.id));
 
-  // ─────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────
   return (
     <div className="space-y-4">
       {/* Add Expense Dialog */}
@@ -413,31 +559,22 @@ const syncingFromParentRef = React.useRef(false);
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Add Expense</DialogTitle>
-            <DialogDescription>
-              Log a new expense for this project.
-            </DialogDescription>
+            <DialogDescription>Log a new expense for this project.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Date */}
             <div>
-              <label className="text-xs font-medium text-slate-600">
-                Date
-              </label>
+              <label className="text-xs font-medium text-slate-600">Date</label>
               <Input
                 type="date"
                 className="mt-1"
                 value={newExpense.date}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    date: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, date: e.target.value }))
                 }
               />
             </div>
 
-            {/* Vendor */}
             <div>
               <label className="text-xs font-medium text-slate-600">
                 Vendor (Optional)
@@ -446,10 +583,7 @@ const syncingFromParentRef = React.useRef(false);
                 className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
                 value={newExpense.vendor}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    vendor: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, vendor: e.target.value }))
                 }
               >
                 <option value="">Select a vendor</option>
@@ -461,19 +595,13 @@ const syncingFromParentRef = React.useRef(false);
               </select>
             </div>
 
-            {/* Category */}
             <div>
-              <label className="text-xs font-medium text-slate-600">
-                Category
-              </label>
+              <label className="text-xs font-medium text-slate-600">Category</label>
               <select
                 className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
                 value={newExpense.category}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    category: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, category: e.target.value }))
                 }
               >
                 <option value="">Select a category</option>
@@ -485,44 +613,31 @@ const syncingFromParentRef = React.useRef(false);
               </select>
             </div>
 
-            {/* Description */}
             <div>
-              <label className="text-xs font-medium text-slate-600">
-                Description
-              </label>
+              <label className="text-xs font-medium text-slate-600">Description</label>
               <textarea
                 className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 rows={3}
                 placeholder="e.g., Concrete Mix"
                 value={newExpense.description}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    description: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, description: e.target.value }))
                 }
               />
             </div>
 
-            {/* Amount */}
             <div>
-              <label className="text-xs font-medium text-slate-600">
-                Amount
-              </label>
+              <label className="text-xs font-medium text-slate-600">Amount</label>
               <Input
                 className="mt-1"
                 type="number"
                 value={newExpense.amount}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    amount: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, amount: e.target.value }))
                 }
               />
             </div>
 
-            {/* Payment Method */}
             <div>
               <label className="text-xs font-medium text-slate-600">
                 Payment Method
@@ -540,7 +655,6 @@ const syncingFromParentRef = React.useRef(false);
               />
             </div>
 
-            {/* Invoice # */}
             <div>
               <label className="text-xs font-medium text-slate-600">
                 Invoice # (Optional)
@@ -558,30 +672,21 @@ const syncingFromParentRef = React.useRef(false);
               />
             </div>
 
-            {/* Reference */}
             <div>
-              <label className="text-xs font-medium text-slate-600">
-                Reference
-              </label>
+              <label className="text-xs font-medium text-slate-600">Reference</label>
               <Input
                 className="mt-1"
                 placeholder="e.g., check number"
                 value={newExpense.reference}
                 onChange={(e) =>
-                  setNewExpense((prev) => ({
-                    ...prev,
-                    reference: e.target.value,
-                  }))
+                  setNewExpense((prev) => ({ ...prev, reference: e.target.value }))
                 }
               />
             </div>
           </div>
 
           <DialogFooter className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setIsAddDialogOpen(false)}
-            >
+            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
               Cancel
             </Button>
             <Button onClick={handleSaveNewExpense}>Save Expense</Button>
@@ -599,19 +704,17 @@ const syncingFromParentRef = React.useRef(false);
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-slate-50 px-4 py-3">
-          {/* left side: group toggle + total */}
           <div className="flex items-center gap-6 text-xs">
             <label className="inline-flex items-center gap-2">
               <input
                 type="checkbox"
                 className="h-4 w-4"
                 checked={groupByCategory}
-                onChange={(e) =>
-                  setGroupByCategory(e.target.checked)
-                }
+                onChange={(e) => setGroupByCategory(e.target.checked)}
               />
               <span>Group by Category</span>
             </label>
+
             <span className="font-medium">
               Total:{' '}
               {totalAmount.toLocaleString(undefined, {
@@ -621,9 +724,7 @@ const syncingFromParentRef = React.useRef(false);
             </span>
           </div>
 
-          {/* right side: filters + actions */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            {/* vendor filter */}
             <select
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
               value={vendorFilter}
@@ -637,7 +738,6 @@ const syncingFromParentRef = React.useRef(false);
               ))}
             </select>
 
-            {/* category filter */}
             <select
               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
               value={categoryFilter}
@@ -651,7 +751,6 @@ const syncingFromParentRef = React.useRef(false);
               ))}
             </select>
 
-            {/* hidden file input for Import */}
             <input
               ref={fileInputRef}
               type="file"
@@ -660,11 +759,7 @@ const syncingFromParentRef = React.useRef(false);
               onChange={handleFileChosen}
             />
 
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleImportClick}
-            >
+            <Button type="button" variant="outline" onClick={handleImportClick}>
               Import
             </Button>
 
@@ -692,12 +787,10 @@ const syncingFromParentRef = React.useRef(false);
               <TableHead className="w-[40px]">
                 <Checkbox
                   aria-label="Select all"
-                  checked={
-                    filteredRows.length > 0 && allVisibleSelected
-                  }
+                  checked={visibleRows.length > 0 && allVisibleSelected}
                   onCheckedChange={(checked) => {
                     const isChecked = !!checked;
-                    const visibleIds = filteredRows.map((r) => r.id);
+                    const visibleIds = visibleRows.map((r) => r.id);
                     if (isChecked) {
                       setSelectedIds((prev) =>
                         Array.from(new Set([...prev, ...visibleIds])),
@@ -710,35 +803,105 @@ const syncingFromParentRef = React.useRef(false);
                   }}
                 />
               </TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Vendor</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Payment Method</TableHead>
-              <TableHead>Reference</TableHead>
-              <TableHead>Invoice #</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="text-right w-[80px]">
-                Actions
+
+              <TableHead>
+                <SortHeader
+                  label="Date"
+                  sortKey="date"
+                  kind="date"
+                  sort={sort}
+                  setSort={setSort}
+                />
               </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Category"
+                  sortKey="category"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Vendor"
+                  sortKey="vendor"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Description"
+                  sortKey="description"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Payment Method"
+                  sortKey="paymentMethod"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Reference"
+                  sortKey="reference"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead>
+                <SortHeader
+                  label="Invoice #"
+                  sortKey="invoiceNumber"
+                  kind="text"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead className="text-right">
+                <SortHeader
+                  label="Amount"
+                  sortKey="amount"
+                  kind="amount"
+                  sort={sort}
+                  setSort={setSort}
+                />
+              </TableHead>
+
+              <TableHead className="text-right w-[80px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
 
           <TableBody>
-            {filteredRows.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={10}
                   className="py-6 text-center text-sm text-slate-500"
                 >
-                  No expenses found. Click &quot;Import&quot; or
-                  &quot;Add Expense&quot; to get started.
+                  No expenses found. Click &quot;Import&quot; or &quot;Add Expense&quot; to get
+                  started.
                 </TableCell>
               </TableRow>
             ) : groupByCategory && groupedRows ? (
               groupedRows.map(([category, group]) => (
                 <React.Fragment key={category}>
-                  {/* category header row */}
                   <TableRow className="bg-slate-50">
                     <TableCell />
                     <TableCell colSpan={7} className="font-semibold">
@@ -760,7 +923,6 @@ const syncingFromParentRef = React.useRef(false);
 
                     return (
                       <TableRow key={row.id}>
-                        {/* checkbox */}
                         <TableCell>
                           <Checkbox
                             checked={isSelected}
@@ -768,9 +930,7 @@ const syncingFromParentRef = React.useRef(false);
                               const c = !!checked;
                               setSelectedIds((prev) =>
                                 c
-                                  ? Array.from(
-                                      new Set([...prev, row.id]),
-                                    )
+                                  ? Array.from(new Set([...prev, row.id]))
                                   : prev.filter((id) => id !== row.id),
                               );
                             }}
@@ -778,63 +938,54 @@ const syncingFromParentRef = React.useRef(false);
                           />
                         </TableCell>
 
+                        {/* Date */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
-                              value={row.date ?? ''}
-                              onChange={(e) =>
-                                updateRow(row.id, {
-                                  date: e.target.value,
-                                })
-                              }
+                              type="date"
+                              value={displayExpenseDate(row.date) ?? ''}
+                              onChange={(e) => updateRow(row.id, { date: e.target.value })}
                             />
                           ) : (
-                            row.date || '-'
+                            displayExpenseDate(row.date)
                           )}
                         </TableCell>
 
+                        {/* Category */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={row.category ?? ''}
-                              onChange={(e) =>
-                                updateRow(row.id, {
-                                  category: e.target.value,
-                                })
-                              }
+                              onChange={(e) => updateRow(row.id, { category: e.target.value })}
                             />
                           ) : (
                             row.category || '-'
                           )}
                         </TableCell>
 
+                        {/* Vendor */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={row.vendor ?? ''}
-                              onChange={(e) =>
-                                updateRow(row.id, {
-                                  vendor: e.target.value,
-                                })
-                              }
+                              onChange={(e) => updateRow(row.id, { vendor: e.target.value })}
                             />
                           ) : (
                             row.vendor || '-'
                           )}
                         </TableCell>
 
+                        {/* Description */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={row.description ?? ''}
                               onChange={(e) =>
-                                updateRow(row.id, {
-                                  description: e.target.value,
-                                })
+                                updateRow(row.id, { description: e.target.value })
                               }
                             />
                           ) : (
@@ -842,15 +993,14 @@ const syncingFromParentRef = React.useRef(false);
                           )}
                         </TableCell>
 
+                        {/* Payment */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={(row as any).paymentMethod ?? ''}
                               onChange={(e) =>
-                                updateRow(row.id, {
-                                  paymentMethod: e.target.value as any,
-                                })
+                                updateRow(row.id, { paymentMethod: e.target.value as any })
                               }
                             />
                           ) : (
@@ -858,15 +1008,14 @@ const syncingFromParentRef = React.useRef(false);
                           )}
                         </TableCell>
 
+                        {/* Reference */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={(row as any).reference ?? ''}
                               onChange={(e) =>
-                                updateRow(row.id, {
-                                  reference: e.target.value as any,
-                                })
+                                updateRow(row.id, { reference: e.target.value as any })
                               }
                             />
                           ) : (
@@ -874,16 +1023,14 @@ const syncingFromParentRef = React.useRef(false);
                           )}
                         </TableCell>
 
+                        {/* Invoice */}
                         <TableCell>
                           {isEditing ? (
                             <Input
                               className="h-8"
                               value={(row as any).invoiceNumber ?? ''}
                               onChange={(e) =>
-                                updateRow(row.id, {
-                                  invoiceNumber:
-                                    e.target.value as any,
-                                })
+                                updateRow(row.id, { invoiceNumber: e.target.value })
                               }
                             />
                           ) : (
@@ -891,6 +1038,7 @@ const syncingFromParentRef = React.useRef(false);
                           )}
                         </TableCell>
 
+                        {/* Amount */}
                         <TableCell className="text-right">
                           {isEditing ? (
                             <Input
@@ -898,19 +1046,13 @@ const syncingFromParentRef = React.useRef(false);
                               type="number"
                               value={row.amount ?? 0}
                               onChange={(e) =>
-                                updateRow(row.id, {
-                                  amount: numberOrZero(
-                                    e.target.value,
-                                  ),
-                                })
+                                updateRow(row.id, { amount: numberOrZero(e.target.value) })
                               }
                             />
                           ) : (
                             <>
                               $
-                              {numberOrZero(
-                                row.amount,
-                              ).toLocaleString(undefined, {
+                              {numberOrZero(row.amount).toLocaleString(undefined, {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
                               })}
@@ -921,37 +1063,23 @@ const syncingFromParentRef = React.useRef(false);
                         <TableCell className="text-right">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                className="h-8 w-8 px-0"
-                              >
+                              <Button size="icon" variant="outline" className="h-8 w-8 px-0">
                                 ⋯
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                               {isEditing ? (
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    setEditingRowId(null)
-                                  }
-                                >
+                                <DropdownMenuItem onClick={() => setEditingRowId(null)}>
                                   Done Editing
                                 </DropdownMenuItem>
                               ) : (
-                                <DropdownMenuItem
-                                  onClick={() =>
-                                    setEditingRowId(row.id)
-                                  }
-                                >
+                                <DropdownMenuItem onClick={() => setEditingRowId(row.id)}>
                                   Edit
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuItem
                                 className="text-red-600 focus:text-red-600"
-                                onClick={() =>
-                                  handleDeleteRow(row.id)
-                                }
+                                onClick={() => handleDeleteRow(row.id)}
                               >
                                 Delete
                               </DropdownMenuItem>
@@ -964,8 +1092,7 @@ const syncingFromParentRef = React.useRef(false);
                 </React.Fragment>
               ))
             ) : (
-              // flat view (no grouping)
-              filteredRows.map((row) => {
+              visibleRows.map((row) => {
                 const isEditing = editingRowId === row.id;
                 const isSelected = selectedIds.includes(row.id);
 
@@ -977,11 +1104,7 @@ const syncingFromParentRef = React.useRef(false);
                         onCheckedChange={(checked) => {
                           const c = !!checked;
                           setSelectedIds((prev) =>
-                            c
-                              ? Array.from(
-                                  new Set([...prev, row.id]),
-                                )
-                              : prev.filter((id) => id !== row.id),
+                            c ? Array.from(new Set([...prev, row.id])) : prev.filter((id) => id !== row.id),
                           );
                         }}
                         aria-label="Select row"
@@ -992,15 +1115,12 @@ const syncingFromParentRef = React.useRef(false);
                       {isEditing ? (
                         <Input
                           className="h-8"
-                          value={row.date ?? ''}
-                          onChange={(e) =>
-                            updateRow(row.id, {
-                              date: e.target.value,
-                            })
-                          }
+                          type="date"
+                          value={displayExpenseDate(row.date) ?? ''}
+                          onChange={(e) => updateRow(row.id, { date: e.target.value })}
                         />
                       ) : (
-                        row.date || '-'
+                        displayExpenseDate(row.date)
                       )}
                     </TableCell>
 
@@ -1009,11 +1129,7 @@ const syncingFromParentRef = React.useRef(false);
                         <Input
                           className="h-8"
                           value={row.category ?? ''}
-                          onChange={(e) =>
-                            updateRow(row.id, {
-                              category: e.target.value,
-                            })
-                          }
+                          onChange={(e) => updateRow(row.id, { category: e.target.value })}
                         />
                       ) : (
                         row.category || '-'
@@ -1025,11 +1141,7 @@ const syncingFromParentRef = React.useRef(false);
                         <Input
                           className="h-8"
                           value={row.vendor ?? ''}
-                          onChange={(e) =>
-                            updateRow(row.id, {
-                              vendor: e.target.value,
-                            })
-                          }
+                          onChange={(e) => updateRow(row.id, { vendor: e.target.value })}
                         />
                       ) : (
                         row.vendor || '-'
@@ -1042,9 +1154,7 @@ const syncingFromParentRef = React.useRef(false);
                           className="h-8"
                           value={row.description ?? ''}
                           onChange={(e) =>
-                            updateRow(row.id, {
-                              description: e.target.value,
-                            })
+                            updateRow(row.id, { description: e.target.value })
                           }
                         />
                       ) : (
@@ -1058,9 +1168,7 @@ const syncingFromParentRef = React.useRef(false);
                           className="h-8"
                           value={(row as any).paymentMethod ?? ''}
                           onChange={(e) =>
-                            updateRow(row.id, {
-                              paymentMethod: e.target.value as any,
-                            })
+                            updateRow(row.id, { paymentMethod: e.target.value as any })
                           }
                         />
                       ) : (
@@ -1074,9 +1182,7 @@ const syncingFromParentRef = React.useRef(false);
                           className="h-8"
                           value={(row as any).reference ?? ''}
                           onChange={(e) =>
-                            updateRow(row.id, {
-                              reference: e.target.value as any,
-                            })
+                            updateRow(row.id, { reference: e.target.value as any })
                           }
                         />
                       ) : (
@@ -1090,10 +1196,7 @@ const syncingFromParentRef = React.useRef(false);
                           className="h-8"
                           value={(row as any).invoiceNumber ?? ''}
                           onChange={(e) =>
-                            updateRow(row.id, {
-                              invoiceNumber:
-                                e.target.value as any,
-                            })
+                            updateRow(row.id, { invoiceNumber: e.target.value })
                           }
                         />
                       ) : (
@@ -1108,19 +1211,13 @@ const syncingFromParentRef = React.useRef(false);
                           type="number"
                           value={row.amount ?? 0}
                           onChange={(e) =>
-                            updateRow(row.id, {
-                              amount: numberOrZero(
-                                e.target.value,
-                              ),
-                            })
+                            updateRow(row.id, { amount: numberOrZero(e.target.value) })
                           }
                         />
                       ) : (
                         <>
                           $
-                          {numberOrZero(
-                            row.amount,
-                          ).toLocaleString(undefined, {
+                          {numberOrZero(row.amount).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
@@ -1131,29 +1228,17 @@ const syncingFromParentRef = React.useRef(false);
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            className="h-8 w-8 px-0"
-                          >
+                          <Button size="icon" variant="outline" className="h-8 w-8 px-0">
                             ⋯
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           {isEditing ? (
-                            <DropdownMenuItem
-                              onClick={() =>
-                                setEditingRowId(null)
-                              }
-                            >
+                            <DropdownMenuItem onClick={() => setEditingRowId(null)}>
                               Done Editing
                             </DropdownMenuItem>
                           ) : (
-                            <DropdownMenuItem
-                              onClick={() =>
-                                setEditingRowId(row.id)
-                              }
-                            >
+                            <DropdownMenuItem onClick={() => setEditingRowId(row.id)}>
                               Edit
                             </DropdownMenuItem>
                           )}
@@ -1176,4 +1261,3 @@ const syncingFromParentRef = React.useRef(false);
     </div>
   );
 }
-
