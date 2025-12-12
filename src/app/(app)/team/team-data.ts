@@ -1,3 +1,4 @@
+// src/app/(app)/team/team-data.ts
 
 export type TeamMember = {
   id: number;
@@ -9,32 +10,10 @@ export type TeamMember = {
   fallback: string;
 };
 
-export const teamMembers: TeamMember[] = [
-  {
-    id: 1,
-    name: 'Rahim Momin',
-    role: 'President',
-    email: 'rahimfancy1@gmail.com',
-    phone: '2814554700',
-    avatarUrl: 'https://picsum.photos/seed/rahim/128/128',
-    fallback: 'RM',
-  },
-  {
-    id: 2,
-    name: 'Asif Momin',
-    role: 'VP',
-    email: 'asifmomin786@gmail.com',
-    phone: '2814508657',
-    avatarUrl: 'https://picsum.photos/seed/asif/128/128',
-    fallback: 'AM',
-  },
-  {
-    id: 3,
-    name: 'Karim Noorani',
-    role: 'Field Manager',
-    email: 'fancybuilders786@gmail.com',
-    phone: '2816911043',
-    avatarUrl: 'https://picsum.photos/seed/karim/128/128',
-    fallback: 'KN',
-  },
-];
+/**
+ * TEMP fallback so other pages (like Dashboard) that still import `teamMembers`
+ * don't break while we finish wiring everything dynamically.
+ *
+ * Once Dashboard is switched to fetch from Supabase too, we can delete this.
+ */
+export const teamMembers: TeamMember[] = [];

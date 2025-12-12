@@ -60,11 +60,14 @@ export function ExpensesTable({ initialData, onDataChange }: Props) {
   const [rows, setRows] = React.useState<Expense[]>(
     () => (initialData ?? []) as Expense[],
   );
+const syncingFromParentRef = React.useRef(false);
 
   // keep local rows in sync if initialData prop changes
   React.useEffect(() => {
-    setRows((initialData ?? []) as Expense[]);
-  }, [initialData]);
+  syncingFromParentRef.current = true;
+  setRows((initialData ?? []) as Expense[]);
+}, [initialData]);
+
 
   // helper used by buttons / editors, ONLY updates local state
   const setRowsAndNotify = React.useCallback(
@@ -75,11 +78,15 @@ export function ExpensesTable({ initialData, onDataChange }: Props) {
   );
 
   // AFTER rows change, notify parent (ProjectDetailsPage)
-  React.useEffect(() => {
-    if (onDataChange) {
-      onDataChange(rows);
-    }
-  }, [rows, onDataChange]);
+ React.useEffect(() => {
+  // If rows were just copied from parent initialData, don't echo back
+  if (syncingFromParentRef.current) {
+    syncingFromParentRef.current = false;
+    return;
+  }
+  onDataChange?.(rows);
+}, [rows, onDataChange]);
+
 
   // controls / filters
   const [groupByCategory, setGroupByCategory] = React.useState(false);

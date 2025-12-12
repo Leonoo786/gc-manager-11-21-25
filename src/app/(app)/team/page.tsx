@@ -1,292 +1,336 @@
 'use client';
 
 import * as React from 'react';
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from '@/components/ui/avatar';
+
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription
-} from '@/components/ui/card';
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { teamMembers as initialTeamMembers, TeamMember } from './team-data';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
-import { Search, UserPlus, MoreHorizontal, Upload } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-  } from '@/components/ui/table';
-  import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-  } from '@/components/ui/dropdown-menu';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+import { getSupabaseClient } from '@/lib/supabase-client';
+
+
+export type TeamMember = {
+  id: string;
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+  avatarUrl: string;
+  fallback: string;
+};
+
+const STORAGE_KEY = 'gc.team.members.v1';
+
+function initials(name: string) {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '??';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function safeJsonParse<T>(raw: string | null, fallback: T): T {
+  try {
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function uploadAvatarToSupabase(file: File) {
+  const supabaseClient = getSupabaseClient();
+  // You can change bucket name if you prefer.
+  const bucket = 'avatars';
+
+  const ext = file.name.split('.').pop() || 'png';
+  const path = `team/${crypto.randomUUID()}.${ext}`;
+
+  const { error: uploadError } = await supabaseClient.storage
+    .from(bucket)
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'image/*',
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data } = supabaseClient.storage.from(bucket).getPublicUrl(path);
+  if (!data?.publicUrl) throw new Error('Failed to get public URL');
+
+  return data.publicUrl;
+}
 
 export default function TeamPage() {
-  const [teamMembers, setTeamMembers] = React.useState<TeamMember[]>(initialTeamMembers);
-  const [isAddMemberOpen, setIsAddMemberOpen] = React.useState(false);
-  const [isEditMemberOpen, setIsEditMemberOpen] = React.useState(false);
-  const [editingMember, setEditingMember] = React.useState<TeamMember | null>(null);
+  const [teamMembers, setTeamMembers] = React.useState<TeamMember[]>([]);
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
 
-  const addMember = (member: Omit<TeamMember, 'id'>) => {
-    const newMember: TeamMember = {
-        ...member,
-        id: teamMembers.length > 0 ? Math.max(...teamMembers.map(m => m.id)) + 1 : 1,
+  const [form, setForm] = React.useState({
+    name: '',
+    role: '',
+    email: '',
+    phone: '',
+    avatarUrl: '',
+  });
+
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+
+  // Load from localStorage (dynamic persistence)
+  React.useEffect(() => {
+    const stored = safeJsonParse<TeamMember[]>(
+      typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null,
+      [],
+    );
+    setTeamMembers(stored);
+  }, []);
+
+  // Persist to localStorage
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(teamMembers));
+  }, [teamMembers]);
+
+  const openAdd = () => {
+    setEditingId(null);
+    setUploadError(null);
+    setForm({ name: '', role: '', email: '', phone: '', avatarUrl: '' });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (m: TeamMember) => {
+    setEditingId(m.id);
+    setUploadError(null);
+    setForm({
+      name: m.name,
+      role: m.role,
+      email: m.email,
+      phone: m.phone,
+      avatarUrl: m.avatarUrl,
+    });
+    setDialogOpen(true);
+  };
+
+  const deleteMember = (id: string) => {
+    setTeamMembers((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const saveMember = () => {
+    const name = form.name.trim();
+    if (!name) return;
+
+    const nextMember: TeamMember = {
+      id: editingId ?? `team-${Date.now()}`,
+      name,
+      role: form.role.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      avatarUrl: form.avatarUrl.trim(),
+      fallback: initials(name),
     };
-    setTeamMembers(prev => [...prev, newMember]);
-    setIsAddMemberOpen(false);
+
+    setTeamMembers((prev) => {
+      if (editingId) return prev.map((m) => (m.id === editingId ? nextMember : m));
+      return [nextMember, ...prev];
+    });
+
+    setDialogOpen(false);
   };
 
-  const handleEditClick = (member: TeamMember) => {
-    setEditingMember(member);
-    setIsEditMemberOpen(true);
+  const onPickFile = async (file: File | null) => {
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const url = await uploadAvatarToSupabase(file);
+      setForm((f) => ({ ...f, avatarUrl: url }));
+    } catch (e: any) {
+      setUploadError(e?.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
-  
-  const handleUpdateMember = (updatedData: Omit<TeamMember, 'id'>) => {
-    if (!editingMember) return;
-    setTeamMembers(teamMembers.map(m => m.id === editingMember.id ? { ...m, ...updatedData } : m));
-    setEditingMember(null);
-  };
-
-  const deleteMember = (id: number) => {
-    setTeamMembers(teamMembers.filter(m => m.id !== id));
-  };
-
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold font-headline tracking-tight">
-            Team Members
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Manage all internal team members.
-          </p>
-        </div>
-         <Dialog open={isAddMemberOpen} onOpenChange={setIsAddMemberOpen}>
-            <DialogTrigger asChild>
-                 <Button>
-                    <UserPlus className="mr-2" />
-                    New Member
-                </Button>
-            </DialogTrigger>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>New Team Member</DialogTitle>
-                    <DialogDescription>Add a new member to your team.</DialogDescription>
-                </DialogHeader>
-                <MemberForm onSubmit={addMember} closeDialog={() => setIsAddMemberOpen(false)} />
-            </DialogContent>
-        </Dialog>
-      </div>
-      
+    <div className="space-y-6">
       <Card>
-        <CardHeader>
-            <CardTitle>All Team Members</CardTitle>
-            <CardDescription>A list of all internal team members in your organization.</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <CardTitle>Team</CardTitle>
+          <Button onClick={openAdd}>+ Add Member</Button>
         </CardHeader>
+
         <CardContent>
-            <div className="flex items-center justify-end mb-4">
-                <div className="relative w-full max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input 
-                    placeholder="Search projects..." 
-                    className="pl-10" 
-                  />
-                </div>
-            </div>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
+                <TableHead>Member</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {teamMembers.map((member) => (
-                <TableRow key={member.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8 rounded-md overflow-hidden">
-                        <AvatarImage
-                          src={member.avatarUrl}
-                          data-ai-hint="person face"
-                          className="rounded-none"
-                        />
-                        <AvatarFallback className="rounded-none">
-                          {member.fallback}
-                          </AvatarFallback>
-                        </Avatar>
 
-                      <span className="font-medium">{member.name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>{member.role}</TableCell>
-                  <TableCell>{member.email}</TableCell>
-                  <TableCell>{member.phone}</TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent>
-                        <DropdownMenuItem onClick={() => handleEditClick(member)}>Edit</DropdownMenuItem>
-                        <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                                <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="text-destructive">Delete</DropdownMenuItem>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        This action cannot be undone. This will permanently delete this team member.
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => deleteMember(member.id)}>Delete</AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+            <TableBody>
+              {teamMembers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-sm text-muted-foreground">
+                    No team members yet.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                teamMembers.map((member) => (
+                  <TableRow key={member.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8 rounded-none">
+                          <AvatarImage src={member.avatarUrl} data-ai-hint="person face" />
+                          <AvatarFallback>{member.fallback}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium">{member.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>{member.role}</TableCell>
+                    <TableCell>{member.email}</TableCell>
+                    <TableCell>{member.phone}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="inline-flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openEdit(member)}>
+                          Edit
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => deleteMember(member.id)}>
+                          Delete
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
-      {/* Edit Dialog */}
-      <Dialog open={isEditMemberOpen} onOpenChange={setIsEditMemberOpen}>
-          <DialogContent>
-              <DialogHeader>
-                  <DialogTitle>Edit Team Member</DialogTitle>
-                  <DialogDescription>Update the details for this team member.</DialogDescription>
-              </DialogHeader>
-              <MemberForm 
-                  member={editingMember}
-                  onSubmit={handleUpdateMember}
-                  closeDialog={() => setIsEditMemberOpen(false)}
-              />
-          </DialogContent>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editingId ? 'Edit Member' : 'Add Member'}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            {/* Preview */}
+            <div className="flex items-center gap-3 rounded-md border p-3">
+              <Avatar className="h-12 w-12 rounded-none">
+                <AvatarImage src={form.avatarUrl} />
+                <AvatarFallback>{initials(form.name)}</AvatarFallback>
+              </Avatar>
+              <div className="flex-1">
+                <div className="text-sm font-medium">{form.name || 'Preview'}</div>
+                <div className="text-xs text-muted-foreground">
+                  {form.avatarUrl ? 'Using uploaded image URL' : 'Upload an image or paste a URL'}
+                </div>
+              </div>
+            </div>
+
+            {/* Upload */}
+            <div className="grid gap-2">
+              <Label>Avatar</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={uploading}
+                  onClick={() => document.getElementById('team-avatar-file')?.click()}
+                >
+                  {uploading ? 'Uploading...' : 'Upload Image'}
+                </Button>
+
+                <input
+                  id="team-avatar-file"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                />
+
+                <Input
+                  placeholder="...or paste an image URL"
+                  value={form.avatarUrl}
+                  onChange={(e) => setForm((f) => ({ ...f, avatarUrl: e.target.value }))}
+                />
+              </div>
+
+              {uploadError && (
+                <div className="text-sm text-red-600">
+                  {uploadError}
+                </div>
+              )}
+            </div>
+
+            {/* Fields */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Name</Label>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label>Role</Label>
+                <Input
+                  value={form.role}
+                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label>Email</Label>
+                <Input
+                  value={form.email}
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label>Phone</Label>
+                <Input
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveMember}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     </div>
   );
-}
-
-function MemberForm({
-    member,
-    onSubmit,
-    closeDialog,
-  }: {
-    member?: TeamMember | null;
-    onSubmit: (data: Omit<TeamMember, 'id'>) => void;
-    closeDialog: () => void;
-  }) {
-    const [name, setName] = React.useState(member?.name || '');
-    const [email, setEmail] = React.useState(member?.email || '');
-    const [phone, setPhone] = React.useState(member?.phone || '');
-    const [role, setRole] = React.useState(member?.role || '');
-    const [avatar, setAvatar] = React.useState<string | null>(member?.avatarUrl || null);
-
-    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setAvatar(reader.result as string);
-            }
-            reader.readAsDataURL(file);
-        }
-    }
-    
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        const fallback = name.split(' ').map(n => n[0]).join('').toUpperCase();
-        onSubmit({
-            name,
-            email,
-            phone,
-            role,
-            avatarUrl: avatar || `https://picsum.photos/seed/${name.replace(/\s/g, '')}/128/128`,
-            fallback,
-        });
-        closeDialog();
-    };
-
-    React.useEffect(() => {
-        if (member) {
-            setName(member.name);
-            setEmail(member.email);
-            setPhone(member.phone);
-            setRole(member.role);
-            setAvatar(member.avatarUrl);
-        }
-    }, [member]);
-
-
-    return (
-        <form onSubmit={handleSubmit}>
-            <div className="grid gap-4 py-4">
-                <div className="space-y-2">
-                    <Label>Avatar</Label>
-                    <div className="flex items-center gap-4">
-                        <Avatar className="h-20 w-20">
-                            {avatar ? <AvatarImage src={avatar} data-ai-hint="person face" /> : <AvatarFallback><UserPlus className="h-8 w-8 text-muted-foreground" /></AvatarFallback>}
-                        </Avatar>
-                        <div className='flex-1'>
-                            <Input id="avatar-upload" type="file" onChange={handleAvatarChange} className="hidden" />
-                             <Button type="button" variant="outline" onClick={() => document.getElementById('avatar-upload')?.click()}>
-                                <Upload className="mr-2 h-4 w-4" />
-                                Upload Photo
-                            </Button>
-                             <p className="text-xs text-muted-foreground mt-2">Upload a photo for the team member.</p>
-                        </div>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="name">Full Name</Label>
-                    <Input id="name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g., John Doe" required />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="role">Role</Label>
-                    <Input id="role" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g., Project Manager" />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="e.g., john.d@company.com" required />
-                </div>
-                <div className="space-y-2">
-                    <Label htmlFor="phone">Phone</Label>
-                    <Input id="phone" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="e.g., 555-123-4567" />
-                </div>
-            </div>
-             <DialogFooter>
-                <DialogClose asChild>
-                    <Button type="button" variant="outline">Cancel</Button>
-                </DialogClose>
-                <Button type="submit">Save</Button>
-            </DialogFooter>
-        </form>
-    );
 }
